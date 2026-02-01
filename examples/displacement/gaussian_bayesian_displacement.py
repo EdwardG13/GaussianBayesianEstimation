@@ -1,5 +1,5 @@
 """
-Compare minimum MSL vs prior width for Bayes-optimal S (Lyapunov) 
+Here we compare the minimum MSL vs prior width for the Bayes-optimal (solution to the Lyapunov equation)
 and constrained ansatzes (linear, quadratic, cubic) for estimating 
 displacement parameter theta along the x quadrature.
 
@@ -7,13 +7,16 @@ The encoded state is:
 rho(theta) = D_x(theta) rho D_x^dagger(theta)
 where D_x(theta) = exp(-i theta p)
 
-We estimate theta with different priors and symmetry function f(theta) = theta.
+We estimate theta with different priors and probe states rho.
+Since rho(theta) has a translation symmetry, we use f(theta) = theta leading to the mean square loss.
 """
 import os
+from pathlib import Path
 import numpy as np
 import scipy.linalg as la
 import matplotlib.pyplot as plt
 
+# Unicode values for some 
 sigma_unicode = '\u03C3'
 sigma2_unicode = '\u03C3\u00B2'
 alpha_unicode = '\u03B1'
@@ -25,7 +28,7 @@ theta_min, theta_max = -10.0, 10.0  # Displacement range
 theta_pts = 1000    # number of grid points for theta
 
 # Reference state parameters (before displacement)
-ref_state_type = 'coherent'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum'
+ref_state_type = 'squeezed_thermal'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
 x0, p0 = 0.0, 0.0  # Initial mean position
 alpha_coherent = 1.0  # coherent state amplitude (if coherent)
 n_thermal = 0.2  # thermal photons (if thermal)
@@ -37,7 +40,7 @@ prior_type = 'gaussian'  # Options: 'gaussian' or 'two_gaussian'
 theta0 = 1     # prior mean/center for theta
 
 # Range of prior widths to test
-theta_sigma_values = np.logspace(-1.5, 0.1, 10) 
+theta_sigma_values = np.logspace(-1.5, 0.5, 10) 
 # -------------------------------------------------
 
 # Ladder operators in truncated Fock basis
@@ -91,6 +94,10 @@ def reference_state(state_type, x0=0.0, p0=0.0, alpha=1.0, n_th=0.2, r=0.8, phi=
         vac[0, 0] = 1.0
         S = squeeze_op(r, phi)
         rho = S @ vac @ S.conj().T
+    elif state_type == 'squeezed_thermal':
+        rho = thermal_state(n_th)
+        S = squeeze_op(r, phi)
+        rho = S @ rho @ S.conj().T
     else:
         raise ValueError(f"Unknown state type: {state_type}")
     
@@ -297,103 +304,100 @@ Top left: MSL. Top right: ratio MSL to optimum.
 Bottom left: linear alpha. Bottom right: quadratic alpha 
 """
 
-fig = plt.figure(figsize=(16, 16))
-gs = fig.add_gridspec(2, 2)
+# fig = plt.figure(figsize=(16, 16))
+# gs = fig.add_gridspec(2, 2)
 
-# Plot 1: MSL vs prior variance
-ax1 = fig.add_subplot(gs[0, 0])
-ax1.loglog(prior_variance_list, msl_bayes_arr, 'o-', linewidth=2.5, 
-           markersize=8, label='Bayes-optimal', color='C0')
-ax1.loglog(prior_variance_list, msl_linear_arr, 'd--', linewidth=2, 
-           markersize=7, label='Linear SPM', color='C3')
-ax1.loglog(prior_variance_list, msl_quad_arr, 's--', linewidth=2, 
-           markersize=7, label='Quadratic SPM', color='C1')
-ax1.loglog(prior_variance_list, msl_cubic_arr, '^:', linewidth=2, 
-           markersize=7, label='Cubic SPM', color='C2')
-ax1.set_xlabel('Prior variance $\\sigma^2$', fontsize=11)
-ax1.set_ylabel('Minimum MSL (MSE)', fontsize=11)
-#ax1.set_title(f'MSE vs Prior Variance ({prior_type} prior)', fontsize=12)
-ax1.legend(fontsize=9)
-#ax1.grid(False, which='both', alpha=0.3)
+# # Plot 1: MSL vs prior variance
+# ax1 = fig.add_subplot(gs[0, 0])
+# ax1.loglog(prior_variance_list, msl_bayes_arr, 'o-', linewidth=2.5, 
+#            markersize=8, label='Bayes-optimal', color='C0')
+# ax1.loglog(prior_variance_list, msl_linear_arr, 'd--', linewidth=2, 
+#            markersize=7, label='Linear SPM', color='C3')
+# ax1.loglog(prior_variance_list, msl_quad_arr, 's--', linewidth=2, 
+#            markersize=7, label='Quadratic SPM', color='C1')
+# ax1.loglog(prior_variance_list, msl_cubic_arr, '^:', linewidth=2, 
+#            markersize=7, label='Cubic SPM', color='C2')
+# ax1.set_xlabel('Prior variance $\\sigma^2$', fontsize=11)
+# ax1.set_ylabel('Minimum MSL (MSE)', fontsize=11)
+# #ax1.set_title(f'MSE vs Prior Variance ({prior_type} prior)', fontsize=12)
+# ax1.legend(fontsize=9)
+# #ax1.grid(False, which='both', alpha=0.3)
 
-# Plot 2: Ratio to Bayes-optimal
-ax2 = fig.add_subplot(gs[0, 1])
-ratio_linear = msl_linear_arr / msl_bayes_arr
-ratio_quad = msl_quad_arr / msl_bayes_arr
-ratio_cubic = msl_cubic_arr / msl_bayes_arr
+# # Plot 2: Ratio to Bayes-optimal
+# ax2 = fig.add_subplot(gs[0, 1])
+# ratio_linear = msl_linear_arr / msl_bayes_arr
+# ratio_quad = msl_quad_arr / msl_bayes_arr
+# ratio_cubic = msl_cubic_arr / msl_bayes_arr
 
-ax2.axhline(y=1, color='C0', linestyle='-', linewidth=2, alpha=0.5, label='Bayes (ratio=1)')
-ax2.semilogx(prior_variance_list, ratio_linear, 'd--', linewidth=2, 
-             markersize=7, label='Linear / Bayes', color='C3')
-ax2.semilogx(prior_variance_list, ratio_quad, 's--', linewidth=2, 
-             markersize=7, label='Quadratic / Bayes', color='C1')
-ax2.semilogx(prior_variance_list, ratio_cubic, '^:', linewidth=2, 
-             markersize=7, label='Cubic / Bayes', color='C2')
-ax2.set_xlabel('Prior variance $\\sigma^2$', fontsize=11)
-ax2.set_ylabel('MSL Ratio', fontsize=11)
-#ax2.set_title('Performance Ratio vs Bayes-Optimal', fontsize=12)
-ax2.legend(fontsize=9)
-#ax2.grid(True, which='both', alpha=0.3)
-ax2.grid(False)
+# ax2.axhline(y=1, color='C0', linestyle='-', linewidth=2, alpha=0.5, label='Bayes (ratio=1)')
+# ax2.semilogx(prior_variance_list, ratio_linear, 'd--', linewidth=2, 
+#              markersize=7, label='Linear / Bayes', color='C3')
+# ax2.semilogx(prior_variance_list, ratio_quad, 's--', linewidth=2, 
+#              markersize=7, label='Quadratic / Bayes', color='C1')
+# ax2.semilogx(prior_variance_list, ratio_cubic, '^:', linewidth=2, 
+#              markersize=7, label='Cubic / Bayes', color='C2')
+# ax2.set_xlabel('Prior variance $\\sigma^2$', fontsize=11)
+# ax2.set_ylabel('MSL Ratio', fontsize=11)
+# #ax2.set_title('Performance Ratio vs Bayes-Optimal', fontsize=12)
+# ax2.legend(fontsize=9)
+# #ax2.grid(True, which='both', alpha=0.3)
+# ax2.grid(False)
 
-#Plot 3: Linear coefficients vs prior variance
-ax3 = fig.add_subplot(gs[1, 0])
-linear_labels = ['I', 'x', 'p']
-alpha_linear_array = np.array(alpha_opt_linear_list)
-for i in range(alpha_linear_array.shape[1]):
-    ax3.semilogx(prior_variance_list, alpha_linear_array[:, i], 'o-', 
-                 linewidth=2, markersize=5, label=linear_labels[i])
-ax3.set_xlabel('Prior variance $\\sigma^2$', fontsize=11)
-ax3.set_ylabel('Optimal coefficient $\\alpha$', fontsize=11)
-#ax3.set_title('Linear SPM vs Prior Variance', fontsize=12)
-ax3.legend(fontsize=9)
-#ax3.grid(True, which='both', alpha=0.3)
-ax3.grid(False)
+# #Plot 3: Linear coefficients vs prior variance
+# ax3 = fig.add_subplot(gs[1, 0])
+# linear_labels = ['I', 'x', 'p']
+# alpha_linear_array = np.array(alpha_opt_linear_list)
+# for i in range(alpha_linear_array.shape[1]):
+#     ax3.semilogx(prior_variance_list, alpha_linear_array[:, i], 'o-', 
+#                  linewidth=2, markersize=5, label=linear_labels[i])
+# ax3.set_xlabel('Prior variance $\\sigma^2$', fontsize=11)
+# ax3.set_ylabel('Optimal coefficient $\\alpha$', fontsize=11)
+# #ax3.set_title('Linear SPM vs Prior Variance', fontsize=12)
+# ax3.legend(fontsize=9)
+# #ax3.grid(True, which='both', alpha=0.3)
+# ax3.grid(False)
 
-# Plot 4: Quadratic coefficients vs prior variance
-ax4 = fig.add_subplot(gs[1, 1])
-quad_labels = ['I', 'x', 'p', 'x²', '(xp+px)/2', 'p²']
-alpha_quad_array = np.array(alpha_opt_quad_list)
-for i in range(alpha_quad_array.shape[1]):
-    ax4.semilogx(prior_variance_list, alpha_quad_array[:, i], 'o-', 
-                 linewidth=2, markersize=5, label=quad_labels[i])
-ax4.set_xlabel('Prior variance $\\sigma^2$', fontsize=11)
-ax4.set_ylabel('Optimal coefficient $\\alpha$', fontsize=11)
-#ax4.set_title('Quadratic SPM vs Prior Variance', fontsize=12)
-ax4.legend(fontsize=9, ncol=2)
-#ax4.grid(True, which='both', alpha=0.3)
-ax4.grid(False)
+# # Plot 4: Quadratic coefficients vs prior variance
+# ax4 = fig.add_subplot(gs[1, 1])
+# quad_labels = ['I', 'x', 'p', 'x²', '(xp+px)/2', 'p²']
+# alpha_quad_array = np.array(alpha_opt_quad_list)
+# for i in range(alpha_quad_array.shape[1]):
+#     ax4.semilogx(prior_variance_list, alpha_quad_array[:, i], 'o-', 
+#                  linewidth=2, markersize=5, label=quad_labels[i])
+# ax4.set_xlabel('Prior variance $\\sigma^2$', fontsize=11)
+# ax4.set_ylabel('Optimal coefficient $\\alpha$', fontsize=11)
+# #ax4.set_title('Quadratic SPM vs Prior Variance', fontsize=12)
+# ax4.legend(fontsize=9, ncol=2)
+# #ax4.grid(True, which='both', alpha=0.3)
+# ax4.grid(False)
 
-plt.suptitle(f'Displacement Estimation: {ref_state_type} state, {prior_type} prior', fontsize=14, y=0.995)
+# plt.suptitle(f'Displacement Estimation: {ref_state_type} state, {prior_type} prior', fontsize=14, y=0.995)
 
 
 """
-4x4 set of plots. Each .
 Two individual plots of MSL ratio MSL to optimum as a function of the prior width. Then save to folder.
 """
 
 # Create output directory if it doesn't exist
-output_dir = 'figs'
+output_dir = Path(__file__).parent / "figs"
+output_dir.mkdir(exist_ok=True)
 os.makedirs(output_dir, exist_ok=True)
 # Plot 1: MSL vs prior variance
 fig1, ax1 = plt.subplots(figsize=(8, 6))
-ax1.loglog(prior_variance_list, msl_bayes_arr, 'o-', linewidth=2.5, 
-           markersize=8, label='Bayes-optimal', color='C0')
-ax1.loglog(prior_variance_list, msl_linear_arr, 'd--', linewidth=2, 
-           markersize=7, label='Linear SPM', color='C3')
-ax1.loglog(prior_variance_list, msl_quad_arr, 's--', linewidth=2, 
-           markersize=7, label='Quadratic SPM', color='C1')
-ax1.loglog(prior_variance_list, msl_cubic_arr, '^:', linewidth=2, 
-           markersize=7, label='Cubic SPM', color='C2')
+ax1.loglog(prior_variance_list, msl_bayes_arr, 'o-', linewidth=3.5, markersize=10, label='Bayes-optimal', color='C0')
+ax1.loglog(prior_variance_list, msl_linear_arr, 'd--', linewidth=3, markersize=9, label='Linear SPM', color='C3')
+ax1.loglog(prior_variance_list, msl_quad_arr, 's--', linewidth=3, markersize=9, label='Quadratic SPM', color='C1')
+ax1.loglog(prior_variance_list, msl_cubic_arr, '^:', linewidth=3, markersize=9, label='Cubic SPM', color='C2')
 ax1.set_xlabel('Prior variance $\\sigma^2$', fontsize=20)
 ax1.set_ylabel('Minimum MSL (MSE)', fontsize=20)
 ax1.legend(fontsize=20)
-ax1.tick_params(axis='both', which='major', labelsize=20)
+ax1.tick_params(axis='both', which='major',length=10, width=2, labelsize=20)
+ax1.tick_params(axis='both', which='minor', length=6, width=1.5)
 ax1.grid(False)
 fig1.tight_layout()
-#fig1.savefig(f'{output_dir}/msl_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
-#fig1.savefig(f'{output_dir}/msl_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
-#print(f"Saved: {output_dir}/msl_vs_variance_{ref_state_type}.png")
+fig1.savefig(f'{output_dir}/msl_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
+fig1.savefig(f'{output_dir}/msl_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
+print(f"Saved: {output_dir}/msl_vs_variance_{ref_state_type}.png")
 
 # Plot 2: Ratio to Bayes-optimal
 fig2, ax2 = plt.subplots(figsize=(8, 6))
@@ -401,22 +405,21 @@ ratio_linear = msl_linear_arr / msl_bayes_arr
 ratio_quad = msl_quad_arr / msl_bayes_arr
 ratio_cubic = msl_cubic_arr / msl_bayes_arr
 
-ax2.axhline(y=1, color='C0', linestyle='-', linewidth=2, alpha=0.5, label='Bayes (ratio=1)')
-ax2.semilogx(prior_variance_list, ratio_linear, 'd--', linewidth=2, 
-             markersize=7, label='Linear / Bayes', color='C3')
-ax2.semilogx(prior_variance_list, ratio_quad, 's--', linewidth=2, 
-             markersize=7, label='Quadratic / Bayes', color='C1')
-ax2.semilogx(prior_variance_list, ratio_cubic, '^:', linewidth=2, 
-             markersize=7, label='Cubic / Bayes', color='C2')
+ax2.axhline(y=1, color='C0', linestyle='-', linewidth=3, alpha=0.6, label='Bayes (ratio=1)')
+ax2.semilogx(prior_variance_list, ratio_linear, 'd--', linewidth=3, markersize=9, label='Linear / Bayes', color='C3')
+ax2.semilogx(prior_variance_list, ratio_quad, 's--', linewidth=3, markersize=9, label='Quadratic / Bayes', color='C1')
+ax2.semilogx(prior_variance_list, ratio_cubic, '^:', linewidth=3, markersize=9, label='Cubic / Bayes', color='C2')
 ax2.set_xlabel('Prior variance $\\sigma^2$', fontsize=20)
 ax2.set_ylabel('MSL Ratio', fontsize=20)
 ax2.legend(fontsize=20)
-ax2.tick_params(axis='both', which='major', labelsize=20)
+ax2.tick_params(axis='both', which='major',length=10, width=2, labelsize=20)
+ax2.tick_params(axis='both', which='minor', length=6, width=1.5)
+ax2.ticklabel_format(axis='y', style='plain', useOffset=False) # Stops Matplotlib from factoring out +1 from the Bayes ratio on the y axis.
 ax2.grid(False)
 fig2.tight_layout()
-#fig2.savefig(f'{output_dir}/ratio_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
-#fig2.savefig(f'{output_dir}/ratio_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
-#print(f"Saved: {output_dir}/ratio_vs_variance_{ref_state_type}.png")
+fig2.savefig(f'{output_dir}/ratio_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
+fig2.savefig(f'{output_dir}/ratio_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
+print(f"Saved: {output_dir}/ratio_vs_variance_{ref_state_type}.png")
 
 plt.show()
 

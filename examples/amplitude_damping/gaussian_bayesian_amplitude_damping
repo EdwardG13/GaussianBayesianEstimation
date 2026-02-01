@@ -1,0 +1,430 @@
+"""
+Compare minimum MSL vs prior width for Bayes-optimal S (Lyapunov) 
+and quadratic ansatz S for estimating damping rate Γ of amplitude damping channel.
+
+The channel evolves as:
+r̄(t) = e^(-Γt) r̄(0)
+σ(t) = e^(-Γt) σ(0) + (1-e^(-Γt)) σ(∞)
+
+We estimate Γ from the evolved state at a fixed time t.
+"""
+
+import numpy as np
+import scipy.linalg as la
+import matplotlib.pyplot as plt
+
+# ---------------- User parameters ----------------
+N = 10            # Fock truncation
+Gamma_min, Gamma_max = 0.01, 2.0  # Damping rate range (Γ > 0)
+Gamma_pts = 51    # number of grid points for Γ
+
+# Initial state parameters (before damping)
+initial_state_type = 'coherent'  # Options: 'coherent', 'thermal', 'squeezed_thermal'
+alpha_coherent = 2.0  # coherent state amplitude (if coherent)
+n_thermal_init = 0.5  # initial thermal photons (if thermal/squeezed_thermal)
+r_squeeze_init = 0.3  # initial squeezing (if squeezed_thermal)
+phi_squeeze_init = 0.0  # squeezing phase
+
+# Evolution time
+t_evolution = 1.0  # Fixed time at which we measure
+
+# Environment temperature
+n_thermal_env = 10  # thermal photons in environment (σ(∞))
+
+# Prior settings
+prior_type = 'gaussian'  # Options: 'gaussian', 'jeffreys', 'beta', 'gamma'
+Gamma0 = 0.5      # prior mean/center for Γ
+Gamma_sigma = 0.3 # prior width parameter
+
+# Range of prior widths to test
+Gamma_sigma_values = np.logspace(-2, 2, 10)  # from 0.01 to ~3.16
+# -------------------------------------------------
+
+# Ladder operators in truncated Fock basis
+a = np.zeros((N, N), dtype=complex)
+for n in range(1, N):
+    a[n-1, n] = np.sqrt(n)
+adag = a.conj().T
+I = np.eye(N, dtype=complex)
+
+# Quadratures
+x = (a + adag) / np.sqrt(2)
+p = (a - adag) / (1j * np.sqrt(2))
+
+def squeeze_op(r, phi):
+    """Squeezing operator S(r,phi) = exp[r/2 * (e^{-2i*phi} a^†^2 - e^{2i*phi} a^2)]"""
+    G = 0.5 * (np.exp(-2j*phi) * adag @ adag - np.exp(2j*phi) * a @ a)
+    return la.expm(r * G)
+
+def displace_op(alpha):
+    """Displacement operator D(α) = exp(α a^† - α* a)"""
+    return la.expm(alpha * adag - np.conj(alpha) * a)
+
+def thermal_state(n_bar):
+    """Thermal state with mean photon number n_bar"""
+    if n_bar < 0:
+        n_bar = 0
+    rho_th = np.zeros((N, N), dtype=complex)
+    for n in range(N):
+        if n_bar > 0:
+            rho_th[n, n] = (n_bar**n) / ((1 + n_bar)**(n+1))
+        else:
+            rho_th[n, n] = 1.0 if n == 0 else 0.0
+    return rho_th
+
+def initial_state(state_type, alpha=2.0, n_th=0.5, r=0.0, phi=0.0):
+    """Create initial state before damping"""
+    if state_type == 'coherent':
+        # Coherent state |α⟩
+        D = displace_op(alpha)
+        vac = np.zeros((N, N), dtype=complex)
+        vac[0, 0] = 1.0
+        rho = D @ vac @ D.conj().T
+        
+    elif state_type == 'thermal':
+        # Thermal state
+        rho = thermal_state(n_th)
+        
+    elif state_type == 'squeezed_thermal':
+        # Squeezed thermal state
+        rho_th = thermal_state(n_th)
+        S = squeeze_op(r, phi)
+        rho = S @ rho_th @ S.conj().T
+        
+    else:
+        raise ValueError(f"Unknown state type: {state_type}")
+    
+    # Ensure hermiticity and normalization
+    rho = 0.5 * (rho + rho.conj().T)
+    rho = rho / np.trace(rho)
+    return rho
+
+def build_lindblad_superoperator(Gamma, n_th, a, adag, N):
+    """
+    Build the Lindbladian superoperator for thermal bosonic damping.
+    
+    The master equation is:
+    ρ̇ = Γ(n_th + 1) D[a]ρ + Γ n_th D[a†]ρ
+    
+    where D[L]ρ = L ρ L† - (1/2){L†L, ρ}
+    
+    Returns the superoperator L such that d|ρ⟩/dt = L|ρ⟩
+    where |ρ⟩ is the vectorized density matrix.
+    """
+    dim = N * N
+    L_super = np.zeros((dim, dim), dtype=complex)
+    
+    I = np.eye(N, dtype=complex)
+    
+    # Helper function for dissipator
+    def dissipator_superop(L_op):
+        """
+        Construct superoperator for D[L]ρ = L ρ L† - (1/2){L†L, ρ}
+        In vectorized form: D_super |ρ⟩
+        """
+        # D[L]ρ = L ρ L† - (1/2)(L†L ρ + ρ L†L)
+        # In superoperator form (vec convention: vec(AXB) = (B^T ⊗ A)vec(X)):
+        # vec(L ρ L†) = (L* ⊗ L) vec(ρ)
+        # vec(L†L ρ) = (I ⊗ L†L) vec(ρ)
+        # vec(ρ L†L) = (L†L)^T ⊗ I) vec(ρ) = ((L†L)* ⊗ I) vec(ρ)
+        
+        Ldag = L_op.conj().T
+        LdagL = Ldag @ L_op
+        
+        # First term: L ρ L†
+        term1 = np.kron(L_op.conj(), L_op)
+        
+        # Second term: -(1/2)(L†L ρ + ρ L†L)
+        term2 = -0.5 * (np.kron(I, LdagL) + np.kron(LdagL.conj(), I))
+        
+        return term1 + term2
+    
+    # D[a]: loss/damping term
+    D_a = dissipator_superop(a)
+    
+    # D[a†]: heating/excitation term
+    D_adag = dissipator_superop(adag)
+    
+    # Full Lindbladian
+    L_super = Gamma * (n_th + 1) * D_a + Gamma * n_th * D_adag
+    
+    return L_super
+
+def amplitude_damping_channel(rho_init, Gamma, t, n_env=0.0):
+    """
+    Apply amplitude damping channel for time t with rate Γ.
+    
+    Uses the exact Lindbladian evolution:
+    ρ̇ = Γ(n_th + 1) D[a]ρ + Γ n_th D[a†]ρ
+    
+    For n_env = 0 (T=0), uses Kraus operators (exact).
+    For n_env > 0 (finite T), uses matrix exponential of Lindbladian.
+    
+    Parameters:
+    - rho_init: initial density matrix
+    - Gamma: damping rate
+    - t: evolution time
+    - n_env: thermal photon number of environment
+    """
+    
+    # For T=0 environment (n_env=0), use pure loss Kraus operators (more efficient)
+    if n_env < 1e-10:
+        eta = np.exp(-Gamma * t)
+        rho_out = np.zeros((N, N), dtype=complex)
+        
+        # Kraus operators E_k for k = 0, 1, 2, ..., N-1
+        # E_k: |n⟩ -> sqrt(binom(n,k)) sqrt(η^(n-k)) sqrt((1-η)^k) |n-k⟩
+        for k in range(N):
+            E_k = np.zeros((N, N), dtype=complex)
+            for n in range(k, N):
+                # Binomial coefficient and probability factors
+                binom_coeff = np.math.factorial(n) / (np.math.factorial(k) * np.math.factorial(n - k))
+                amplitude = np.sqrt(binom_coeff * eta**(n-k) * (1-eta)**k)
+                E_k[n-k, n] = amplitude
+            
+            rho_out += E_k @ rho_init @ E_k.conj().T
+    
+    else:
+        # Finite temperature: use Lindbladian evolution
+        # Build the Lindbladian superoperator
+        L_super = build_lindblad_superoperator(Gamma, n_env, a, adag, N)
+        
+        # Vectorize initial state (column-major order, 'F')
+        rho_vec = rho_init.reshape(N*N, order='F')
+        
+        # Propagate: |ρ(t)⟩ = exp(t*L) |ρ(0)⟩
+        rho_vec_final = la.expm(t * L_super) @ rho_vec
+        
+        # Reshape back to matrix
+        rho_out = rho_vec_final.reshape((N, N), order='F')
+    
+    # Ensure hermiticity and normalization
+    rho_out = 0.5 * (rho_out + rho_out.conj().T)
+    trace = np.trace(rho_out)
+    if trace > 1e-10:
+        rho_out = rho_out / trace
+    
+    return rho_out
+
+def get_prior(Gamma_grid, prior_type, Gamma0, Gamma_sigma, Gamma_min, Gamma_max):
+    """Generate different types of priors on the damping rate grid"""
+    if prior_type == 'gaussian':
+        prior_unnorm = np.exp(-0.5 * ((Gamma_grid - Gamma0) / Gamma_sigma)**2)
+        
+    elif prior_type == 'jeffreys':
+        log_Gamma = np.log(Gamma_grid + 1e-10)
+        log_Gamma0 = np.log(Gamma0)
+        prior_unnorm = (1.0 / (Gamma_grid + 1e-10)) * np.exp(-0.5 * ((log_Gamma - log_Gamma0) / Gamma_sigma)**2)
+        
+    elif prior_type == 'beta':
+        x_scaled = (Gamma_grid - Gamma_min) / (Gamma_max - Gamma_min)
+        mu_scaled = (Gamma0 - Gamma_min) / (Gamma_max - Gamma_min)
+        mu_scaled = np.clip(mu_scaled, 0.01, 0.99)
+        var_scaled = (Gamma_sigma / (Gamma_max - Gamma_min))**2
+        var_scaled = np.clip(var_scaled, 1e-6, mu_scaled * (1 - mu_scaled) * 0.99)
+        common = mu_scaled * (1 - mu_scaled) / var_scaled - 1
+        alpha = max(0.5, mu_scaled * common)
+        beta = max(0.5, (1 - mu_scaled) * common)
+        
+        with np.errstate(divide='ignore', invalid='ignore'):
+            log_prior = (alpha - 1) * np.log(x_scaled + 1e-100) + (beta - 1) * np.log(1 - x_scaled + 1e-100)
+            prior_unnorm = np.exp(log_prior)
+            prior_unnorm[x_scaled <= 0] = 0
+            prior_unnorm[x_scaled >= 1] = 0
+            prior_unnorm = np.nan_to_num(prior_unnorm, nan=0.0, posinf=0.0, neginf=0.0)
+        
+    elif prior_type == 'gamma':
+        k = (Gamma0 / Gamma_sigma)**2
+        theta = Gamma_sigma**2 / Gamma0
+        k = max(0.5, k)
+        theta = max(1e-6, theta)
+        
+        with np.errstate(over='ignore', under='ignore', invalid='ignore'):
+            log_prior = (k - 1) * np.log(Gamma_grid + 1e-100) - Gamma_grid / theta
+            prior_unnorm = np.exp(log_prior)
+            prior_unnorm = np.nan_to_num(prior_unnorm, nan=0.0, posinf=0.0, neginf=0.0)
+        
+    else:
+        raise ValueError(f"Unknown prior type: {prior_type}")
+    
+    dGamma = Gamma_grid[1] - Gamma_grid[0]
+    total = np.sum(prior_unnorm) * dGamma
+    if total > 1e-100:
+        prior = prior_unnorm / total
+    else:
+        print(f"Warning: Prior normalization failed for {prior_type}, using uniform")
+        prior = np.ones_like(Gamma_grid) / (Gamma_max - Gamma_min)
+    
+    return prior
+
+def get_optimal_coefficients(barrho, W, B):
+    """Compute optimal coefficients alpha^opt for the quadratic ansatz"""
+    def HS(A, Bop):
+        return np.real(np.trace(A.conj().T @ Bop))
+    
+    m = len(B)
+    G = np.zeros((m, m), dtype=float)
+    b = np.zeros(m, dtype=float)
+    
+    for i in range(m):
+        for j in range(m):
+            G[i, j] = 0.5 * HS(B[i], barrho @ B[j] + B[j] @ barrho)
+        b[i] = HS(B[i], W)
+    
+    alpha_opt, *_ = la.lstsq(G, b)
+    
+    return alpha_opt, G, b
+
+def compute_msl_for_prior_width(Gamma_sigma, Gamma0=0.5, t=1.0, prior_type='gaussian'):
+    """
+    Compute MSL for both methods given a prior width.
+    
+    Parameters:
+    - Gamma_sigma: prior width parameter
+    - Gamma0: prior center/mean
+    - t: evolution time
+    - prior_type: type of prior distribution
+    
+    Returns:
+    - msl_bayes: MSL for Bayes-optimal S
+    - msl_quad: MSL for quadratic ansatz
+    - alpha_opt: optimal coefficients for quadratic ansatz
+    """
+    
+    Gamma_grid = np.linspace(Gamma_min, Gamma_max, Gamma_pts)
+    dGamma = Gamma_grid[1] - Gamma_grid[0]
+    
+    # Get prior
+    prior = get_prior(Gamma_grid, prior_type, Gamma0, Gamma_sigma, Gamma_min, Gamma_max)
+    
+    # Get initial state (same for all Γ)
+    rho_init = initial_state(initial_state_type, alpha=alpha_coherent, 
+                             n_th=n_thermal_init, r=r_squeeze_init, phi=phi_squeeze_init)
+    
+    # Build rho(Γ) list - states after amplitude damping
+    rho_list = []
+    for Gamma in Gamma_grid:
+        rho = amplitude_damping_channel(rho_init, Gamma, t, n_thermal_env)
+        rho_list.append(rho)
+    
+    # Compute bar-rho (rho_0) and W (rho_1)
+    barrho = np.zeros((N, N), dtype=complex)
+    W = np.zeros((N, N), dtype=complex)
+    for i, Gamma in enumerate(Gamma_grid):
+        barrho += prior[i] * rho_list[i] * dGamma
+        W += prior[i] * Gamma * rho_list[i] * dGamma
+    barrho = 0.5 * (barrho + barrho.conj().T)
+    W = 0.5 * (W + W.conj().T)
+    
+    # Compute lambda (second moment of prior * f(Γ))
+    lambda_val = np.sum(prior * Gamma_grid**2 * dGamma)
+    
+    # ---------------- Exact Bayes S (Fock basis) ---------------
+    dim = N * N
+    A_big = np.kron(np.eye(N), barrho) + np.kron(barrho.conj().T, np.eye(N))
+    vecW = W.reshape(dim, order='F')
+    vecS_bayes = la.pinv(A_big) @ (2.0 * vecW)
+    S_bayes = vecS_bayes.reshape((N, N), order='F')
+    S_bayes = 0.5 * (S_bayes + S_bayes.conj().T)
+    
+    # MSL for Bayes: L_min = lambda - Tr(rho_0 S^2)
+    msl_bayes = lambda_val - np.real(np.trace(barrho @ (S_bayes @ S_bayes)))
+    
+    # ---------------- Quadratic ansatz -----------------------
+    B = []
+    B.append(I)
+    B.append(x)
+    B.append(p)
+    B.append(x @ x)
+    B.append(0.5 * (x @ p + p @ x))
+    B.append(p @ p)
+    B = [0.5 * (M + M.conj().T) for M in B]
+    
+    # Get optimal coefficients
+    alpha_opt, G_mat, b_vec = get_optimal_coefficients(barrho, W, B)
+    
+    # Construct S_quad
+    S_quad = sum(alpha_opt[k] * B[k] for k in range(len(B)))
+    S_quad = 0.5 * (S_quad + S_quad.conj().T)
+    
+    # MSL for quadratic: L = lambda - b^T G^{-1} b
+    msl_quad = lambda_val - b_vec @ la.pinv(G_mat) @ b_vec
+    
+    return msl_bayes, msl_quad, alpha_opt
+
+# Compute MSL for each prior width
+msl_bayes_list = []
+msl_quad_list = []
+alpha_opt_list = []
+
+print("="*70)
+print(f"Estimating damping rate Γ from amplitude damping channel")
+print(f"Initial state: {initial_state_type}")
+if initial_state_type == 'coherent':
+    print(f"  α = {alpha_coherent}")
+elif initial_state_type == 'thermal':
+    print(f"  n̄_init = {n_thermal_init}")
+elif initial_state_type == 'squeezed_thermal':
+    print(f"  n̄_init = {n_thermal_init}, r = {r_squeeze_init}, φ = {phi_squeeze_init}")
+print(f"Evolution time: t = {t_evolution}")
+print(f"Environment temperature: n̄_env = {n_thermal_env}")
+print(f"Prior type: {prior_type}")
+print(f"Prior center: Γ₀ = {Gamma0}")
+print("="*70)
+
+for i, Gamma_sigma in enumerate(Gamma_sigma_values):
+    print(f"Progress: {i+1}/{len(Gamma_sigma_values)}, σ = {Gamma_sigma:.4f}", end='')
+    msl_b, msl_q, alpha = compute_msl_for_prior_width(
+        Gamma_sigma, Gamma0=Gamma0, t=t_evolution, prior_type=prior_type
+    )
+    msl_bayes_list.append(msl_b)
+    msl_quad_list.append(msl_q)
+    alpha_opt_list.append(alpha)
+    print(f" -> MSL_Bayes={msl_b:.4e}, MSL_Quad={msl_q:.4e}")
+
+# Plotting
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+# Plot 1: MSL vs prior width
+ax1.loglog(Gamma_sigma_values, msl_bayes_list, 'o-', linewidth=2, 
+           markersize=7, label='Full Bayes-optimal S (Lyapunov)')
+ax1.loglog(Gamma_sigma_values, msl_quad_list, 's--', linewidth=2, 
+           markersize=7, label='Constrained S (Quadratic ansatz)')
+ax1.set_xlabel('Prior width σ', fontsize=12)
+ax1.set_ylabel('Minimum MSL', fontsize=12)
+ax1.set_title(f'MSL vs Prior Width (Γ₀={Gamma0}, t={t_evolution})', fontsize=12)
+ax1.legend(fontsize=10)
+ax1.grid(True, which='both', alpha=0.3)
+
+# Plot 2: Optimal coefficients vs prior width
+basis_labels = ['I', 'x', 'p', 'x²', '(xp+px)/2', 'p²']
+alpha_array = np.array(alpha_opt_list)
+for i in range(alpha_array.shape[1]):
+    ax2.semilogx(Gamma_sigma_values, alpha_array[:, i], 'o-', 
+                 linewidth=2, markersize=5, label=basis_labels[i])
+ax2.set_xlabel('Prior width σ', fontsize=12)
+ax2.set_ylabel('Optimal coefficient α', fontsize=12)
+ax2.set_title('Quadratic Ansatz Coefficients vs Prior Width', fontsize=12)
+ax2.legend(fontsize=10, ncol=2)
+ax2.grid(True, which='both', alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+# Print summary
+print("\n" + "="*70)
+print("Summary:")
+print("="*70)
+print(f"Initial state: {initial_state_type}")
+print(f"Evolution time: t = {t_evolution}")
+print(f"Environment: n̄_env = {n_thermal_env}")
+print(f"Prior type: {prior_type}")
+print(f"Prior center: Γ₀ = {Gamma0}")
+print(f"Prior width range: σ ∈ [{Gamma_sigma_values[0]:.3f}, {Gamma_sigma_values[-1]:.3f}]")
+print(f"\nFinal MSL values (at σ = {Gamma_sigma_values[-1]:.3f}):")
+print(f"  Bayes-optimal: {msl_bayes_list[-1]:.6e}")
+print(f"  Quadratic:     {msl_quad_list[-1]:.6e}")
+print(f"  Ratio (Quad/Bayes): {msl_quad_list[-1]/msl_bayes_list[-1]:.4f}")
+print(f"\nFinal optimal coefficients α:")
+for i, label in enumerate(basis_labels):
+    print(f"  α[{label}] = {alpha_opt_list[-1][i]:+.6f}")

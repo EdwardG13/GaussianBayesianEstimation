@@ -1,0 +1,20 @@
+# Virtual environments
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Research folder (still ongoing)
+research/
+
+# Figures 
+# these are auto-generated
+examples/**/figs/ 
+
+# Mathematica files (for now)
+*.nb
+
+# OS / editor
+.DS_Store
+.vscode/
