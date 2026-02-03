@@ -28,11 +28,11 @@ theta_min, theta_max = -10.0, 10.0  # Displacement range
 theta_pts = 1000    # number of grid points for theta
 
 # Reference state parameters (before displacement)
-ref_state_type = 'squeezed_thermal'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
+ref_state_type = 'coherent'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
 x0, p0 = 0.0, 0.0  # Initial mean position
 alpha_coherent = 1.0  # coherent state amplitude (if coherent)
 n_thermal = 0.2  # thermal photons (if thermal)
-r_squeeze = 0.8  # squeezing parameter
+r_squeeze = 0.4  # squeezing parameter
 phi_squeeze = 0.0  # squeezing angle (0 for x-squeezed)
 
 # Prior settings
@@ -40,7 +40,7 @@ prior_type = 'gaussian'  # Options: 'gaussian' or 'two_gaussian'
 theta0 = 1     # prior mean/center for theta
 
 # Range of prior widths to test
-theta_sigma_values = np.logspace(-1.5, 0.5, 10) 
+theta_sigma_values = np.logspace(-1.5, 0.1, 10) 
 # -------------------------------------------------
 
 # Ladder operators in truncated Fock basis
@@ -122,7 +122,7 @@ def get_prior(theta_grid, prior_type, theta0, theta_sigma, theta_min, theta_max)
         prior_unnorm = np.exp(-0.5 * ((theta_grid - theta0) / theta_sigma)**2)
 
     elif prior_type == 'two_gaussian':
-        prior_unnorm = np.exp(-0.5 * ((theta_grid - theta0) / theta_sigma)**2) + 5*np.exp(-0.5 * ((theta_grid - 2*theta0) / theta_sigma)**2)
+        prior_unnorm = np.exp(-0.5 * ((theta_grid - theta0) / theta_sigma)**2) + 2*np.exp(-0.5 * ((theta_grid - 2*theta0) / theta_sigma)**2)
 
     else:
         raise ValueError(f"Unknown prior type: {prior_type}")
@@ -144,10 +144,11 @@ def get_prior_variance(theta_grid, prior):
     variance = np.sum((theta_grid - mean)**2 * prior * dtheta)
     return variance
 
-def get_optimal_coefficients(barrho, W, B):
+def get_optimal_coefficients(rho0, rho1, B):
     # Compute optimal coefficients alpha^opt for constrained ansatz
-    def HS(A, Bop):
-        return np.real(np.trace(A.conj().T @ Bop))
+    def HS(Aop, Bop):
+        # Define the Hilbert-Schmidt inner product between operators A and B
+        return np.real(np.trace(Aop.conj().T @ Bop))
     
     m = len(B)
     G = np.zeros((m, m), dtype=float)
@@ -155,14 +156,15 @@ def get_optimal_coefficients(barrho, W, B):
     
     for i in range(m):
         for j in range(m):
-            G[i, j] = 0.5 * HS(B[i], barrho @ B[j] + B[j] @ barrho)
-        b[i] = HS(B[i], W)
+            G[i, j] = 0.5 * HS(B[i], rho0 @ B[j] + B[j] @ rho0)
+        b[i] = HS(B[i], rho1)
     
     alpha_opt, *_ = la.lstsq(G, b)
     
     return alpha_opt, G, b
 
-# Thermal state with varying mean photon number
+# Thermal state with varying mean photon number. Not currently used.
+"""
 def thermal_state_varying(n_bar):
     rho_th = np.zeros((N, N), dtype=complex)
     for n in range(N):
@@ -171,6 +173,7 @@ def thermal_state_varying(n_bar):
         else:
             rho_th[n, n] = 1.0 if n == 0 else 0.0
     return rho_th
+"""
 
 def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     """
@@ -202,39 +205,39 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
         rho_theta = rho_theta / np.trace(rho_theta)
         rho_list.append(rho_theta)
     
-    # Compute bar-rho (rho_0) and W (rho_1)
-    barrho = np.zeros((N, N), dtype=complex)
-    W = np.zeros((N, N), dtype=complex)
+    # Compute rho_0 and rho_1
+    rho0 = np.zeros((N, N), dtype=complex)
+    rho1 = np.zeros((N, N), dtype=complex)
     for i, theta in enumerate(theta_grid):
-        barrho += prior[i] * rho_list[i] * dtheta
-        W += prior[i] * theta * rho_list[i] * dtheta
-    barrho = 0.5 * (barrho + barrho.conj().T)
-    W = 0.5 * (W + W.conj().T)
+        rho0 += prior[i] * rho_list[i] * dtheta
+        rho1 += prior[i] * theta * rho_list[i] * dtheta
+    rho0 = 0.5 * (rho0 + rho0.conj().T)
+    rho1 = 0.5 * (rho1 + rho1.conj().T)
     
     lambda_val = np.sum(prior * theta_grid**2 * dtheta)
     
     # ---------------- Exact Bayes S (Fock basis) ---------------
     dim = N * N
-    A_big = np.kron(np.eye(N), barrho) + np.kron(barrho.conj().T, np.eye(N))
-    vecW = W.reshape(dim, order='F')
-    vecS_bayes = la.pinv(A_big) @ (2.0 * vecW)
+    A_big = np.kron(np.eye(N), rho0) + np.kron(rho0.conj().T, np.eye(N))
+    vecrho1 = rho1.reshape(dim, order='F')
+    vecS_bayes = la.pinv(A_big) @ (2.0 * vecrho1)
     S_bayes = vecS_bayes.reshape((N, N), order='F')
     S_bayes = 0.5 * (S_bayes + S_bayes.conj().T)
     
-    msl_bayes = lambda_val - np.real(np.trace(barrho @ (S_bayes @ S_bayes)))
+    msl_bayes = lambda_val - np.real(np.trace(rho0 @ (S_bayes @ S_bayes)))
     
     # ---------------- Linear ansatz: {I, x, p} -----------------------
     B_linear = [I, x, p]
     B_linear = [0.5 * (M + M.conj().T) for M in B_linear]
     
-    alpha_opt_linear, G_mat_linear, b_vec_linear = get_optimal_coefficients(barrho, W, B_linear)
+    alpha_opt_linear, G_mat_linear, b_vec_linear = get_optimal_coefficients(rho0, rho1, B_linear)
     msl_linear = lambda_val - b_vec_linear @ la.pinv(G_mat_linear) @ b_vec_linear
     
     # ---------------- Quadratic ansatz -----------------------
     B_quad = [I, x, p, x @ x, 0.5 * (x @ p + p @ x), p @ p]
     B_quad = [0.5 * (M + M.conj().T) for M in B_quad]
     
-    alpha_opt_quad, G_mat_quad, b_vec_quad = get_optimal_coefficients(barrho, W, B_quad)
+    alpha_opt_quad, G_mat_quad, b_vec_quad = get_optimal_coefficients(rho0, rho1, B_quad)
     msl_quad = lambda_val - b_vec_quad @ la.pinv(G_mat_quad) @ b_vec_quad
     
     # ---------------- Cubic ansatz -----------------------
@@ -247,7 +250,7 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     B_cubic.append(0.5 * (x @ p @ x + p @ x @ p))
     B_cubic = [0.5 * (M + M.conj().T) for M in B_cubic]
     
-    alpha_opt_cubic, G_mat_cubic, b_vec_cubic = get_optimal_coefficients(barrho, W, B_cubic)
+    alpha_opt_cubic, G_mat_cubic, b_vec_cubic = get_optimal_coefficients(rho0, rho1, B_cubic)
     msl_cubic = lambda_val - b_vec_cubic @ la.pinv(G_mat_cubic) @ b_vec_cubic
     
     return (msl_bayes, msl_linear, msl_quad, msl_cubic, 
@@ -395,9 +398,9 @@ ax1.tick_params(axis='both', which='major',length=10, width=2, labelsize=20)
 ax1.tick_params(axis='both', which='minor', length=6, width=1.5)
 ax1.grid(False)
 fig1.tight_layout()
-fig1.savefig(f'{output_dir}/msl_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
-fig1.savefig(f'{output_dir}/msl_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
-print(f"Saved: {output_dir}/msl_vs_variance_{ref_state_type}.png")
+# fig1.savefig(f'{output_dir}/msl_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
+# fig1.savefig(f'{output_dir}/msl_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
+# print(f"Saved: {output_dir}/msl_vs_variance_{ref_state_type}.png")
 
 # Plot 2: Ratio to Bayes-optimal
 fig2, ax2 = plt.subplots(figsize=(8, 6))
@@ -417,9 +420,9 @@ ax2.tick_params(axis='both', which='minor', length=6, width=1.5)
 ax2.ticklabel_format(axis='y', style='plain', useOffset=False) # Stops Matplotlib from factoring out +1 from the Bayes ratio on the y axis.
 ax2.grid(False)
 fig2.tight_layout()
-fig2.savefig(f'{output_dir}/ratio_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
-fig2.savefig(f'{output_dir}/ratio_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
-print(f"Saved: {output_dir}/ratio_vs_variance_{ref_state_type}.png")
+# fig2.savefig(f'{output_dir}/ratio_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
+# fig2.savefig(f'{output_dir}/ratio_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
+# print(f"Saved: {output_dir}/ratio_vs_variance_{ref_state_type}.png")
 
 plt.show()
 
