@@ -1,20 +1,22 @@
 # Virtual environments
 .venv/
 
+# OS / editor
+.DS_Store
+.vscode/
+
 # Python cache
 __pycache__/
 *.py[cod]
 
-# Research folder (still ongoing)
+# Research folder (ongoing)
 research/
 
 # Figures 
-# these are auto-generated
-examples/**/figs/ 
+# Ignore figs at repo root for now
+/figs/
+# Do not ignore figs inside examples
+#!/examples/**/figs/ 
 
 # Mathematica files (for now)
 *.nb
-
-# OS / editor
-.DS_Store
-.vscode/
