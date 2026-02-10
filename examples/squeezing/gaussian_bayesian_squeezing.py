@@ -4,7 +4,7 @@ and constrained ansatzes (linear, quadratic, cubic) for estimating squeezing of 
 
 For no squeezing angle, the encoded state is:
 rho(theta) = S(theta) rho S^dagger(theta)
-where S(theta) = exp(-i/2 theta (x p + p x))
+where S(theta) = exp(-1/2 theta (x p + p x))
 
 """
 import os
@@ -107,7 +107,7 @@ def design_parameters(N, ref_state_type, alpha=1.0, n_th=0.2, r=0.4, theta0=0.5,
 
 def squeeze_op(r, phi):
     # Squeezing operator 
-    G = 0.5 * (np.exp(-2j*phi) * adag @ adag - np.exp(2j*phi) * a @ a)
+    G = 0.5 * (np.exp(-2j*phi) * a @ a - np.exp(2j*phi) * adag @ adag)
     return la.expm(r * G)
 
 def displace_op(alpha):
@@ -223,8 +223,7 @@ def thermal_state_varying(n_bar):
 
 def msl_bayes_for_pvm(S_op, rho0, rho1, lambda_val):
     """
-    Compute Bayes MSL for the PVM defined by the spectral decomposition of S_op.
-    Uses the posterior mean estimator.
+    Compute Bayes MSL for the PVM defined by the spectral decomposition of S_op and the posterior mean estimator.
     """
     # Eigen-decomposition of S_op
     eigvals, eigvecs = la.eigh(S_op)
@@ -280,6 +279,7 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     rho1 = np.zeros((N, N), dtype=complex)
     for i, theta in enumerate(theta_grid):
         rho0 += prior[i] * rho_list[i] * dtheta
+        #rho1 += prior[i] * theta * rho_list[i] * dtheta
         rho1 += prior[i] * theta * rho_list[i] * dtheta
     rho0 = 0.5 * (rho0 + rho0.conj().T)
     rho1 = 0.5 * (rho1 + rho1.conj().T)
@@ -351,31 +351,31 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     return (msl_bayes, msl_linear, msl_quad, msl_cubic, alpha_opt_linear, alpha_opt_quad, alpha_opt_cubic, prior_var,alpha_opt_prior,msl_prior,msl_linear_bayes,msl_quad_bayes,msl_cubic_bayes)
 
 def compute_sigma(theta_sigma):
+    # Function used for parallel loop
     return compute_msl_for_prior_width(theta_sigma, theta0=theta0, prior_type=prior_type)
 
 # ------------------------------------------------- Main program -------------------------------------------------
 
 
 # -------------------------- User parameters --------------------------
-N = 20 # Fock truncation 
+N = 30 # Fock truncation 
 
 # Reference state parameters
-ref_state_type = 'squeezed_thermal'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
+ref_state_type = 'coherent'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
 x0, p0 = 0.0, 0.0  # Initial mean position
-alpha_coherent = 0.5+0.4j  # coherent state amplitude (if coherent)
-n_thermal = 0.2  # thermal photons (if thermal)
-r_squeeze = 0.4  # squeezing parameter
-phi_squeeze = 0.0  # squeezing angle (0 for x-squeezed)
+alpha_coherent = 0.5+0.5j  # Coherent state amplitude (if coherent)
+n_thermal = 0.2  # Thermal photons (if thermal)
+r_squeeze = 0.4  # Squeezing parameter (if squeezed)
+phi_squeeze = 0.0  # Squeezing angle (0 for x-squeezed)
 
 # Prior settings
 prior_type = 'gaussian'  # Options: 'gaussian' or 'two_gaussian'
-theta0 = 0.1     # prior mean/center for theta
-theta_pts = 2000    # number of grid points for theta
+theta0 = 0.1     # Prior mean/center for theta
+theta_pts = 2000    # Number of grid points for theta
 sigma_pts = 10 # Number of prior standard deviation grid points
 
 safety_factor=5 # Ensures Fock truncation is enough
 params = design_parameters(N, ref_state_type,alpha_coherent,n_thermal,r_squeeze,theta0,sigma_pts,safety_factor)
-
 
 theta_min=params['theta_min'] # Prior range
 theta_max=params['theta_max']
@@ -433,6 +433,21 @@ if __name__ == '__main__':
     #     msl_linear_bayes_list.append(msl_bayes_l)
     #     msl_quad_bayes_list.append(msl_bayes_q)
     #     msl_cubic_bayes_list.append(msl_bayes_c)
+
+    print("="*70)
+    print(f"Estimating squeezing")
+    print(f"Reference state: {ref_state_type}")
+    if ref_state_type == 'coherent':
+        print(f"  {alpha_unicode} = {alpha_coherent}")
+    elif ref_state_type == 'thermal':
+        print(f"  {nbar_unicode} = {n_thermal}")
+    elif ref_state_type == 'squeezed_vacuum':
+        print(f"  r = {r_squeeze}, phi = {phi_squeeze}")
+    print(f"Prior type: {prior_type}")
+    print(f"Prior center: theta = {theta0}")
+    print(f"{theta_unicode} range: [{params['theta_min']:.2f}, {params['theta_max']:.2f}]")
+    print(f"{sigma_unicode}_max: {params['sigma_max']:.2f}")
+    print("="*70)
 
 
     results = []
@@ -587,7 +602,7 @@ if __name__ == '__main__':
     Two individual plots of MSL ratio MSL to optimum as a function of the prior width. Then save to folder.
     """
 
-    """
+    """    
     # Create output directory if it doesn't exist
     output_dir = Path(__file__).parent / "figs"
     output_dir.mkdir(exist_ok=True)
@@ -595,9 +610,9 @@ if __name__ == '__main__':
     # Plot 1: MSL vs prior variance
     fig1, ax1 = plt.subplots(figsize=(8, 6))
     ax1.loglog(prior_variance_list, msl_bayes_arr, 'o-', linewidth=3.5, markersize=10, label='Bayes-optimal', color='C0')
-    ax1.loglog(prior_variance_list, msl_linear_arr, 'd--', linewidth=3, markersize=9, label='Linear SPM', color='C3')
-    ax1.loglog(prior_variance_list, msl_quad_arr, 's--', linewidth=3, markersize=9, label='Quadratic SPM', color='C1')
-    ax1.loglog(prior_variance_list, msl_cubic_arr, '^:', linewidth=3, markersize=9, label='Cubic SPM', color='C2')
+    ax1.loglog(prior_variance_list, msl_linear_arr, 'd--', linewidth=3, markersize=9, label='Linear', color='C3')
+    ax1.loglog(prior_variance_list, msl_quad_arr, 's--', linewidth=3, markersize=9, label='Quadratic', color='C1')
+    #ax1.loglog(prior_variance_list, msl_cubic_arr, '^:', linewidth=3, markersize=9, label='Cubic', color='C2')
     ax1.loglog(prior_variance_list, msl_prior_arr, '^:', linewidth=3, markersize=9, label='Prior', color='C4')
     ax1.set_xlabel('Prior variance $\\sigma^2$', fontsize=20)
     ax1.set_ylabel('Minimum MSL (MSE)', fontsize=20)
@@ -617,12 +632,18 @@ if __name__ == '__main__':
     ratio_quad = msl_quad_arr / msl_bayes_arr
     ratio_cubic = msl_cubic_arr / msl_bayes_arr
     ratio_prior = msl_prior_arr / msl_bayes_arr
+    ratio_linear_bayes = msl_linear_bayes_arr / msl_bayes_arr
+    ratio_quad_bayes = msl_quad_bayes_arr / msl_bayes_arr
+    ratio_cubic_bayes = msl_cubic_bayes_arr / msl_bayes_arr
 
     ax2.axhline(y=1, color='C0', linestyle='-', linewidth=3, alpha=0.6, label='Bayes (ratio=1)')
     ax2.semilogx(prior_variance_list, ratio_linear, 'd--', linewidth=3, markersize=9, label='Linear / Bayes', color='C3')
     ax2.semilogx(prior_variance_list, ratio_quad, 's--', linewidth=3, markersize=9, label='Quadratic / Bayes', color='C1')
-    ax2.semilogx(prior_variance_list, ratio_cubic, '^:', linewidth=3, markersize=9, label='Cubic / Bayes', color='C2')
+    #ax2.semilogx(prior_variance_list, ratio_cubic, '^:', linewidth=3, markersize=9, label='Cubic / Bayes', color='C2')
     ax2.semilogx(prior_variance_list, ratio_prior, '^:', linewidth=3, markersize=9, label='Prior / Bayes', color='C4')
+    ax2.semilogx(prior_variance_list, ratio_linear_bayes, 'd--', linewidth=3, markersize=9, label='Linear PM / Bayes', color='C5')
+    ax2.semilogx(prior_variance_list, ratio_quad_bayes, 's--', linewidth=3, markersize=9, label='Quad PM / Bayes', color='C6')
+    #ax2.semilogx(prior_variance_list, ratio_cubic_bayes, '^--', linewidth=3, markersize=9, label='Cubic PM / Bayes', color='C7')
     ax2.set_xlabel('Prior variance $\\sigma^2$', fontsize=20)
     ax2.set_ylabel('MSL Ratio', fontsize=20)
     ax2.legend(fontsize=20)

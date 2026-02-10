@@ -92,7 +92,7 @@ def design_parameters(N, ref_state_type, alpha=1.0, n_th=0.2, r=0.4, theta0=0.5,
 
 def squeeze_op(r, phi):
     # Squeezing operator 
-    G = 0.5 * (np.exp(-2j*phi) * adag @ adag - np.exp(2j*phi) * a @ a)
+    G = 0.5 * (np.exp(-2j*phi) * a @ a - np.exp(2j*phi) * adag @ adag)
     return la.expm(r * G)
 
 def displace_op(alpha):
@@ -334,7 +334,8 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
             alpha_opt_linear, alpha_opt_quad, alpha_opt_cubic, prior_var,msl_linear_bayes,msl_quad_bayes,msl_cubic_bayes)
 
 
-def compute_sigma(theta_sigma):
+def compute_sigma(theta_sigma): 
+    # Function used for parallel loop
     return compute_msl_for_prior_width(theta_sigma, theta0=theta0, prior_type=prior_type)
 
 # ------------------------------------------------- Main program -------------------------------------------------
@@ -344,17 +345,17 @@ def compute_sigma(theta_sigma):
 N = 20 # Fock truncation 
 
 # Reference state parameters (before displacement)
-ref_state_type = 'coherent'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
+ref_state_type = 'squeezed_vacuum'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
 x0, p0 = 0.0, 0.0  # Initial mean position
-alpha_coherent = 0.5+0.4j  # coherent state amplitude (if coherent)
-n_thermal = 0.2  # thermal photons (if thermal)
-r_squeeze = 0.4  # squeezing parameter
-phi_squeeze = 0.0  # squeezing angle (0 for x-squeezed)
+alpha_coherent = 0.5+0.4j  # Coherent state amplitude (if coherent)
+n_thermal = 0.2  # Thermal photons (if thermal)
+r_squeeze = 0.4  # Squeezing parameter
+phi_squeeze = 0.0  # Squeezing angle (0 for x-squeezed)
 
 # Prior settings
 prior_type = 'gaussian'  # Options: 'gaussian' or 'two_gaussian'
-theta0 = 0.1     # prior mean/center for theta
-theta_pts = 2000    # number of grid points for theta
+theta0 = 0.1     # Prior mean/center for theta
+theta_pts = 2000    # Number of grid points for theta
 sigma_pts = 10 # Number of prior standard deviation grid points
 
 safety_factor=5 # Ensures Fock truncation is enough
