@@ -22,37 +22,88 @@ alpha_unicode = '\u03B1'
 theta_unicode = '\u03B8'
 nbar_unicode = '\u0304n' 
 
-# ---------------- User parameters ----------------
-N = 60           # Fock truncation 
-theta_min, theta_max = -2.5, 2.5  # Displacement range
-theta_pts = 2000    # number of grid points for theta
 
-# Reference state parameters (before displacement)
-ref_state_type = 'coherent'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
-x0, p0 = 0.0, 0.0  # Initial mean position
-alpha_coherent = 0.1 +0.2j  # coherent state amplitude (if coherent)
-n_thermal = 0.2  # thermal photons (if thermal)
-r_squeeze = 0.4  # squeezing parameter (if squeezed)
-phi_squeeze = 0.0  # squeezing angle (0 for x-squeezed)
+# ------------------------------------------------- Functions -------------------------------------------------
 
-# Prior settings
-prior_type = 'gaussian'  # Options: 'gaussian' or 'two_gaussian'
-theta0 = 0.1     # prior mean/center for theta
+def design_parameters(N, ref_state_type, alpha=1.0, n_th=0.2, r=0.4, theta0=0.5, sigma_pts=10,safety_factor=3):
+    """
+    Parameter designer to ensure Fock truncation and prior range is sufficient.
 
-# Range of prior widths to test
-theta_sigma_values = np.logspace(-1.5, -0.2, 10) # Max sigma ~~ 0.5
-# -------------------------------------------------
+    A squeezed reference state has <n>(theta) which a function depending on the reference state.
+    For a given Fock truncation, the maximum average photon number we can resolve is <n>_max~N/safety factor.
+    One can then invert for the largest grid size theta_max allowed.
 
-# Ladder operators in truncated Fock basis
-a = np.zeros((N, N), dtype=complex)
-for n in range(1, N):
-    a[n-1, n] = np.sqrt(n)
-adag = a.conj().T
-I = np.eye(N, dtype=complex)
-
-# Quadratures
-x = (a + adag) / np.sqrt(2)
-p = (a - adag) / (1j * np.sqrt(2))
+    
+    Inputs:
+    -----------
+    int N : Fock truncation
+    str ref_state_type : 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', 'squeezed_thermal'
+    complex or float alpha : Coherent state amplitude
+    float n_th : Thermal photon number
+    float : Initial squeezing parameter
+    float theta0 : Prior center
+    float sigma_pts : Number of prior standard deviation grid points
+    float safety_factor : Safety margin (3-5 recommended)
+    
+    Returns:
+    --------
+    dict with theta_min, theta_max, sigma_max, theta_sigma_values
+    """
+    
+    # Initial photon number depending on probe state
+    if ref_state_type == 'vacuum':
+        n0 = 0
+    elif ref_state_type == 'coherent':
+        n0 = abs(alpha)**2
+    elif ref_state_type == 'thermal':
+        n0 = n_th
+    elif ref_state_type == 'squeezed_vacuum':
+        n0 = np.sinh(r)**2
+    elif ref_state_type == 'squeezed_thermal':
+        n0 = (n_th + 0.5) * np.cosh(2*r) - 0.5
+    
+    # Photon budget
+    n_budget = N / safety_factor - n0
+    
+    if n_budget < 1:
+        raise ValueError("Insufficient Fock truncation")
+    
+    # Reference state-specific limit
+    if ref_state_type =='vacuum':
+        # Here <n>(theta_max) = sinh^2(theta_max) ~ e^(2 theta_max)/4
+        theta_max = 0.5 * np.log(4 * n_budget)
+        #theta_max = np.sqrt(np.arcsinh(n_budget))
+    elif ref_state_type == 'thermal':
+        # <n>(theta) = (n_th + 1/2)cosh(2 theta) - 1/2 ~ 1/2(n_th + 1/2)e^(2 theta)
+        theta_max = 0.5 * np.log(2*n_budget / (n_th + 0.5))
+    elif ref_state_type == 'coherent':
+        # <n>_max ~ max(|Re(alpha)|^2,|Im(alpha)|^2) e^(2 theta_max)
+        alpha_max = max(abs(np.real(alpha)), abs(np.imag(alpha)))
+        A = max(alpha_max**2, 1 / 4)  # vacuum term fallback
+        theta_max = 0.5 * np.log(n_budget / A)
+            
+    elif ref_state_type == 'squeezed_vacuum':
+        # <n>(theta) = sinh^2(r+theta) ~ 1/4 e^2(r+theta)
+        theta_max = 0.5 * np.log(4 * n_budget) - r
+            
+    elif ref_state_type == 'squeezed_thermal':
+        # <n>(theta) = (n_th + 1/2)cosh(2 (r+theta)) - 1/2 ~ 1/2(n_th + 1/2)e^(2(r+theta))
+        theta_max = 0.5 * np.log(2 * n_budget / (n_th + 0.5)) - r
+    
+    # Prior and grid
+    sigma_max = (theta_max - abs(theta0)) / 3 # The maximum standard deviation of a Gaussian prior that ensures the prior doesn't put significant weight beyond theta_max.
+    theta_min = theta0 - 3 * sigma_max
+    
+    theta_sigma_values = np.logspace(-1.5, np.log10(sigma_max), sigma_pts) # Create a prior grid with sigma_pts
+    
+    return {
+        'theta_min': theta_min,
+        'theta_max': theta_max,
+        'sigma_max': sigma_max,
+        'theta_sigma_values': theta_sigma_values,
+        'n0': n0,
+        'n_budget': n_budget,
+    }
 
 def squeeze_op(r, phi):
     # Squeezing operator 
@@ -301,64 +352,46 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
 
 def compute_sigma(theta_sigma):
     return compute_msl_for_prior_width(theta_sigma, theta0=theta0, prior_type=prior_type)
-    
 
-def test(theta_sigma, theta0=0.0, prior_type='gaussian'):
-    
-    theta_grid = np.linspace(theta_min, theta_max, theta_pts)
-    dtheta = theta_grid[1] - theta_grid[0]
-    
-    prior = get_prior(theta_grid, prior_type, theta0, theta_sigma, theta_min, theta_max)
-    prior_var = get_prior_variance(theta_grid, prior)
-    
-    # Reference state (same for all theta)
-    rho_ref = reference_state(ref_state_type, x0=x0, p0=p0, alpha=alpha_coherent,
-                              n_th=n_thermal, r=r_squeeze, phi=phi_squeeze)
-    
-    # Build rho(theta) list - states after displacement
-    rho_list = []
-    for theta in theta_grid:
-        #D_x = displacement_x(theta)
-        #rho_theta = thermal_state_varying(theta)
-        #rho_theta = D_x @ rho_ref @ D_x.conj().T
-        S = squeeze_op(theta,phi_squeeze)
-        rho_theta = S @ rho_ref @ S.conj().T
-        rho_theta = 0.5 * (rho_theta + rho_theta.conj().T)
-        rho_theta = rho_theta / np.trace(rho_theta)
-        rho_list.append(rho_theta)
-    
-    # Compute rho_0 and rho_1
-    rho0 = np.zeros((N, N), dtype=complex)
-    rho1 = np.zeros((N, N), dtype=complex)
-    for i, theta in enumerate(theta_grid):
-        rho0 += prior[i] * rho_list[i] * dtheta
-        rho1 += prior[i] * theta * rho_list[i] * dtheta
-    rho0 = 0.5 * (rho0 + rho0.conj().T)
-    rho1 = 0.5 * (rho1 + rho1.conj().T)
-    
-    lambda_val = np.sum(prior * theta_grid**2 * dtheta)
-    
-    # ---------------- Exact Bayes S (Fock basis) ---------------
-    dim = N * N
-    A_big = np.kron(np.eye(N), rho0) + np.kron(rho0.T, np.eye(N))
-    vecrho1 = rho1.reshape(dim, order='F')
-    vecS_bayes = la.pinv(A_big) @ (2.0 * vecrho1)
-    S_bayes = vecS_bayes.reshape((N, N), order='F')
-    S_bayes = 0.5 * (S_bayes + S_bayes.conj().T)
-    
-    msl_bayes = lambda_val - np.real(np.trace(rho0 @ (S_bayes @ S_bayes)))
-
-    print(f"lambda_val = {lambda_val}")
-    print(f"Tr(rho0 S²) = {np.real(np.trace(rho0 @ (S_bayes @ S_bayes)))}")
-    print(f"MSL_bayes = {msl_bayes}")
+# ------------------------------------------------- Main program -------------------------------------------------
 
 
+# -------------------------- User parameters --------------------------
+N = 20 # Fock truncation 
 
-    #return (msl_bayes, msl_linear, msl_quad, msl_cubic, alpha_opt_linear, alpha_opt_quad, alpha_opt_cubic, prior_var)
-    return (lambda_val,msl_bayes)
+# Reference state parameters
+ref_state_type = 'squeezed_thermal'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
+x0, p0 = 0.0, 0.0  # Initial mean position
+alpha_coherent = 0.5+0.4j  # coherent state amplitude (if coherent)
+n_thermal = 0.2  # thermal photons (if thermal)
+r_squeeze = 0.4  # squeezing parameter
+phi_squeeze = 0.0  # squeezing angle (0 for x-squeezed)
+
+# Prior settings
+prior_type = 'gaussian'  # Options: 'gaussian' or 'two_gaussian'
+theta0 = 0.1     # prior mean/center for theta
+theta_pts = 2000    # number of grid points for theta
+sigma_pts = 10 # Number of prior standard deviation grid points
+
+safety_factor=5 # Ensures Fock truncation is enough
+params = design_parameters(N, ref_state_type,alpha_coherent,n_thermal,r_squeeze,theta0,sigma_pts,safety_factor)
 
 
-# ---------------- Program ----------------
+theta_min=params['theta_min'] # Prior range
+theta_max=params['theta_max']
+sigma_max=params['sigma_max'] # Max standard deviation of a Gaussian prior which is 99.7% contained in the prior range
+theta_sigma_values=params['theta_sigma_values'] # Range of prior widths to test
+
+# Ladder operators in truncated Fock basis
+a = np.zeros((N, N), dtype=complex)
+for n in range(1, N):
+    a[n-1, n] = np.sqrt(n)
+adag = a.conj().T
+I = np.eye(N, dtype=complex)
+
+# Quadratures
+x = (a + adag) / np.sqrt(2)
+p = (a - adag) / (1j * np.sqrt(2))
 
 if __name__ == '__main__':
 
