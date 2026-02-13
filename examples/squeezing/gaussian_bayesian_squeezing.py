@@ -4,7 +4,7 @@ and constrained ansatzes (linear, quadratic, cubic) for estimating squeezing of 
 
 For no squeezing angle, the encoded state is:
 rho(theta) = S(theta) rho S^dagger(theta)
-where S(theta) = exp(-1/2 theta (x p + p x))
+where S(theta) = exp[theta/2 (a^2 - (a^dagger)^2)]
 
 """
 import os
@@ -21,7 +21,7 @@ sigma2_unicode = '\u03C3\u00B2'
 alpha_unicode = '\u03B1'
 theta_unicode = '\u03B8'
 nbar_unicode = '\u0304n' 
-
+phi_unicode = '\u03D5'
 
 # ------------------------------------------------- Functions -------------------------------------------------
 
@@ -223,7 +223,7 @@ def thermal_state_varying(n_bar):
 
 def msl_bayes_for_pvm(S_op, rho0, rho1, lambda_val):
     """
-    Compute Bayes MSL for the PVM defined by the spectral decomposition of S_op and the posterior mean estimator.
+    Compute Bayes MSL for the PVM defined by the spectral decomposition of S_op and the (corresponding optimal) posterior mean estimator.
     """
     # Eigen-decomposition of S_op
     eigvals, eigvecs = la.eigh(S_op)
@@ -236,10 +236,30 @@ def msl_bayes_for_pvm(S_op, rho0, rho1, lambda_val):
         pk = np.real(np.trace(Pk @ rho0))
         mk = np.real(np.trace(Pk @ rho1))
 
-        if pk > 1e-14:
+        if pk > 1e-10:
             msl_gain += (mk**2) / pk
-
-    return lambda_val - msl_gain
+    
+    # If eigenvalues are identical, the eigenvectors returned are arbitrary orthonormal basis vectors. Treat separately.
+    if np.linalg.norm(S_op - theta0 * I) < 1e-10: 
+        return lambda_val - theta0**2
+    else:
+        return lambda_val - msl_gain
+    
+def msl_homodyne_func(phi_homodyne, rho0, rho1, lambda_val):
+    """
+    Compute MSL for homodyne measurement at angle phi with posterior mean estimator.
+    
+    Homodyne at angle phi measures the quadrature: x_phi = x*cos(phi) + p*sin(phi)
+        
+    Returns:
+    msl : float
+        Mean squared loss for homodyne + posterior mean
+    """
+    # Construct rotated quadrature operator
+    x_phi = x * np.cos(phi_homodyne) + p * np.sin(phi_homodyne)
+    
+    # Homodyne is a PVM in the eigenbasis of x_phi
+    return msl_bayes_for_pvm(x_phi, rho0, rho1, lambda_val)
 
 
 def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
@@ -302,6 +322,7 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     
     alpha_opt_linear, G_mat_linear, b_vec_linear = get_optimal_coefficients(rho0, rho1, B_linear)
     msl_linear = lambda_val - b_vec_linear @ la.pinv(G_mat_linear) @ b_vec_linear
+
     
     # ---------------- Quadratic ansatz -----------------------
     B_quad = [I, x, p, x @ x, 0.5 * (x @ p + p @ x), p @ p]
@@ -346,22 +367,34 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     S_cubic = 0.5 * (S_cubic + S_cubic.conj().T)
     msl_cubic_bayes = msl_bayes_for_pvm(S_cubic, rho0, rho1, lambda_val)
 
+
+    # Homodyne measurement at an angle phi + PM estimator
+    msl_homodyne = msl_homodyne_func(phi_homodyne, rho0, rho1, lambda_val)
+
+    # print("alpha opt linear coefficients: ",alpha_opt_linear) # Debugging
+    # print("S linear bayes -mu0 norm: ",np.linalg.norm(S_linear - theta0 * I))
+    # print("S linear -mu0 norm: ",np.linalg.norm(msl_linear - theta0 * I))
+    # print("S linear bayes MSL - (lambda + mu0^2) : ",msl_linear_bayes-(lambda_val-theta0**2))
+    # print("S linear MSL - (lambda + mu0^2) : ",msl_linear-(lambda_val-theta0**2))
+
     
     #return (msl_bayes, msl_linear, msl_quad, msl_cubic, alpha_opt_linear, alpha_opt_quad, alpha_opt_cubic, prior_var)
-    return (msl_bayes, msl_linear, msl_quad, msl_cubic, alpha_opt_linear, alpha_opt_quad, alpha_opt_cubic, prior_var,alpha_opt_prior,msl_prior,msl_linear_bayes,msl_quad_bayes,msl_cubic_bayes)
+    return (msl_bayes, msl_linear, msl_quad, msl_cubic, alpha_opt_linear, alpha_opt_quad, alpha_opt_cubic,
+             prior_var,alpha_opt_prior,msl_prior,msl_linear_bayes,msl_quad_bayes,msl_cubic_bayes,msl_homodyne)
 
 def compute_sigma(theta_sigma):
     # Function used for parallel loop
     return compute_msl_for_prior_width(theta_sigma, theta0=theta0, prior_type=prior_type)
 
-# ------------------------------------------------- Main program -------------------------------------------------
+
+######### -------------------------------------------------------------- Main program --------------------------------------------------------------#########
 
 
 # -------------------------- User parameters --------------------------
-N = 30 # Fock truncation 
+N = 20 # Fock truncation 
 
 # Reference state parameters
-ref_state_type = 'coherent'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
+ref_state_type = 'squeezed_vacuum'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
 x0, p0 = 0.0, 0.0  # Initial mean position
 alpha_coherent = 0.5+0.5j  # Coherent state amplitude (if coherent)
 n_thermal = 0.2  # Thermal photons (if thermal)
@@ -374,13 +407,15 @@ theta0 = 0.1     # Prior mean/center for theta
 theta_pts = 2000    # Number of grid points for theta
 sigma_pts = 10 # Number of prior standard deviation grid points
 
-safety_factor=5 # Ensures Fock truncation is enough
+safety_factor=10 # Ensures Fock truncation is enough
 params = design_parameters(N, ref_state_type,alpha_coherent,n_thermal,r_squeeze,theta0,sigma_pts,safety_factor)
 
 theta_min=params['theta_min'] # Prior range
 theta_max=params['theta_max']
 sigma_max=params['sigma_max'] # Max standard deviation of a Gaussian prior which is 99.7% contained in the prior range
 theta_sigma_values=params['theta_sigma_values'] # Range of prior widths to test
+
+phi_homodyne=0 # Angle of homodyne measurement. 0 and pi/2 corresponds to x and p quadratures respectively.
 
 # Ladder operators in truncated Fock basis
 a = np.zeros((N, N), dtype=complex)
@@ -409,6 +444,7 @@ if __name__ == '__main__':
     msl_linear_bayes_list = []
     msl_quad_bayes_list = []
     msl_cubic_bayes_list = []
+    msl_homodyne_list = []
 
     # Loop over prior widths
     # for i, theta_sigma in enumerate(theta_sigma_values):
@@ -462,7 +498,7 @@ if __name__ == '__main__':
         ))
 
     for res in results:
-        msl_b, msl_l, msl_q, msl_c, alpha_l, alpha_q, alpha_c, prior_var,alpha_prior,msl_prior,msl_bayes_l,msl_bayes_q,msl_bayes_c = res
+        msl_b, msl_l, msl_q, msl_c, alpha_l, alpha_q, alpha_c, prior_var,alpha_prior,msl_prior,msl_bayes_l,msl_bayes_q,msl_bayes_c,msl_hom = res
         msl_bayes_list.append(msl_b)
         msl_linear_list.append(msl_l)
         msl_quad_list.append(msl_q)
@@ -476,6 +512,7 @@ if __name__ == '__main__':
         msl_linear_bayes_list.append(msl_bayes_l)
         msl_quad_bayes_list.append(msl_bayes_q)
         msl_cubic_bayes_list.append(msl_bayes_c)
+        msl_homodyne_list.append(msl_hom)
 
 
     # Convert to arrays
@@ -491,6 +528,8 @@ if __name__ == '__main__':
     msl_quad_bayes_arr = np.array(msl_quad_bayes_list)
     msl_cubic_bayes_arr = np.array(msl_cubic_bayes_list)
 
+    msl_homodyne_arr = np.array(msl_homodyne_list)
+
     """
     4x4 set of plots. Each as a function of the prior width.
     Top left: MSL. Top right: ratio MSL to optimum.
@@ -505,11 +544,11 @@ if __name__ == '__main__':
     ax1.loglog(prior_variance_list, msl_bayes_arr, 'o-', linewidth=2.5, 
             markersize=8, label='Bayes-optimal', color='C0')
     ax1.loglog(prior_variance_list, msl_linear_arr, 'd--', linewidth=2, 
-            markersize=7, label='Linear SPM', color='C3')
+            markersize=7, label='Linear', color='C3')
     ax1.loglog(prior_variance_list, msl_quad_arr, 's--', linewidth=2, 
-            markersize=7, label='Quadratic SPM', color='C1')
+            markersize=7, label='Quadratic', color='C1')
     ax1.loglog(prior_variance_list, msl_cubic_arr, '^:', linewidth=2, 
-            markersize=7, label='Cubic SPM', color='C2')
+            markersize=7, label='Cubic', color='C2')
 
     ax1.loglog(prior_variance_list, msl_prior_arr, '^:', linewidth=2, 
             markersize=7, label='Prior', color='C4')
@@ -540,23 +579,17 @@ if __name__ == '__main__':
     ratio_quad_bayes = msl_quad_bayes_arr / msl_bayes_arr
     ratio_cubic_bayes = msl_cubic_bayes_arr / msl_bayes_arr
 
+    ratio_homodyne = msl_homodyne_arr / msl_bayes_arr
+    
     ax2.axhline(y=1, color='C0', linestyle='-', linewidth=2, alpha=0.5, label='Bayes (ratio=1)')
-    ax2.semilogx(prior_variance_list, ratio_linear, 'd--', linewidth=2, 
-                markersize=7, label='Linear / Bayes', color='C3')
-    ax2.semilogx(prior_variance_list, ratio_quad, 's--', linewidth=2, 
-                markersize=7, label='Quadratic / Bayes', color='C1')
-    ax2.semilogx(prior_variance_list, ratio_cubic, '^--', linewidth=2, 
-                markersize=7, label='Cubic / Bayes', color='C2')
-
-    ax2.semilogx(prior_variance_list, ratio_linear_bayes, 'd--', linewidth=2, 
-                markersize=7, label='Linear PM / Bayes', color='C5')
-    ax2.semilogx(prior_variance_list, ratio_quad_bayes, 's--', linewidth=2, 
-                markersize=7, label='Quad PM / Bayes', color='C6')
-    ax2.semilogx(prior_variance_list, ratio_cubic_bayes, '^--', linewidth=2, 
-                markersize=7, label='Cubic PM / Bayes', color='C7')
-
-    ax2.semilogx(prior_variance_list, ratio_prior, '^:', linewidth=2, 
-                markersize=7, label='Prior / Bayes', color='C4')
+    ax2.semilogx(prior_variance_list, ratio_linear, 'd--', linewidth=2, markersize=7, label='Linear / Bayes', color='C3')
+    ax2.semilogx(prior_variance_list, ratio_quad, 's--', linewidth=2, markersize=7, label='Quadratic / Bayes', color='C1')
+    ax2.semilogx(prior_variance_list, ratio_cubic, '^--', linewidth=2, markersize=7, label='Cubic / Bayes', color='C2')
+    ax2.semilogx(prior_variance_list, ratio_linear_bayes, 'd--', linewidth=2, markersize=7, label='Linear + PM / Bayes', color='C5')
+    ax2.semilogx(prior_variance_list, ratio_quad_bayes, 's--', linewidth=2, markersize=7, label='Quad + PM / Bayes', color='C6')
+    ax2.semilogx(prior_variance_list, ratio_cubic_bayes, '^--', linewidth=2, markersize=7, label='Cubic + PM / Bayes', color='C7')
+    ax2.semilogx(prior_variance_list, ratio_prior, '^:', linewidth=2, markersize=7, label='Prior / Bayes', color='C4')
+    ax2.semilogx(prior_variance_list, ratio_homodyne, 'v--', linewidth=2, markersize=7, label=f'Homodyne {phi_unicode}={phi_homodyne:.2f} / Bayes', color='C8')
 
 
     ax2.set_xlabel('Prior variance $\\sigma^2$', fontsize=11)
@@ -599,10 +632,11 @@ if __name__ == '__main__':
 
 
     """
-    Two individual plots of MSL ratio MSL to optimum as a function of the prior width. Then save to folder.
+    Three individual plots of 1) the MSL 2) the ratio of the MSL to the global optimum and 3) the optimal constrained coefficients, as a function of the prior width.
+    Images are saved to figs/{}.
     """
 
-    """    
+    """
     # Create output directory if it doesn't exist
     output_dir = Path(__file__).parent / "figs"
     output_dir.mkdir(exist_ok=True)
@@ -621,12 +655,12 @@ if __name__ == '__main__':
     ax1.tick_params(axis='both', which='minor', length=6, width=1.5)
     ax1.grid(False)
     fig1.tight_layout()
-    fig1.savefig(f'{output_dir}/squeezing_msl_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
-    fig1.savefig(f'{output_dir}/squeezing_msl_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
-    print(f"Saved: {output_dir}/squeezing_msl_vs_variance_{ref_state_type}.png")
+    #fig1.savefig(f'{output_dir}/squeezing_msl_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
+    #fig1.savefig(f'{output_dir}/squeezing_msl_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
+    #print(f"Saved: {output_dir}/squeezing_msl_vs_variance_{ref_state_type}.png")
 
 
-    #Plot 2: Ratio to Bayes-optimal
+    # Plot 2: Ratio to Bayes-optimal
     fig2, ax2 = plt.subplots(figsize=(8, 6))
     ratio_linear = msl_linear_arr / msl_bayes_arr
     ratio_quad = msl_quad_arr / msl_bayes_arr
@@ -635,15 +669,17 @@ if __name__ == '__main__':
     ratio_linear_bayes = msl_linear_bayes_arr / msl_bayes_arr
     ratio_quad_bayes = msl_quad_bayes_arr / msl_bayes_arr
     ratio_cubic_bayes = msl_cubic_bayes_arr / msl_bayes_arr
+    ratio_homodyne = msl_homodyne_arr / msl_bayes_arr
 
-    ax2.axhline(y=1, color='C0', linestyle='-', linewidth=3, alpha=0.6, label='Bayes (ratio=1)')
-    ax2.semilogx(prior_variance_list, ratio_linear, 'd--', linewidth=3, markersize=9, label='Linear / Bayes', color='C3')
-    ax2.semilogx(prior_variance_list, ratio_quad, 's--', linewidth=3, markersize=9, label='Quadratic / Bayes', color='C1')
-    #ax2.semilogx(prior_variance_list, ratio_cubic, '^:', linewidth=3, markersize=9, label='Cubic / Bayes', color='C2')
-    ax2.semilogx(prior_variance_list, ratio_prior, '^:', linewidth=3, markersize=9, label='Prior / Bayes', color='C4')
-    ax2.semilogx(prior_variance_list, ratio_linear_bayes, 'd--', linewidth=3, markersize=9, label='Linear PM / Bayes', color='C5')
-    ax2.semilogx(prior_variance_list, ratio_quad_bayes, 's--', linewidth=3, markersize=9, label='Quad PM / Bayes', color='C6')
-    #ax2.semilogx(prior_variance_list, ratio_cubic_bayes, '^--', linewidth=3, markersize=9, label='Cubic PM / Bayes', color='C7')
+    ax2.axhline(y=1, color='C0', linestyle='-', linewidth=4, alpha=0.6, label='Bayes (ratio=1)')
+    ax2.semilogx(prior_variance_list, ratio_prior, '^:', linewidth=4, markersize=9, label='Prior / Bayes', color='C4')
+    ax2.semilogx(prior_variance_list, ratio_linear, 'd--', linewidth=4, markersize=9, label='Linear / Bayes', color='C3')
+    ax2.semilogx(prior_variance_list, ratio_linear_bayes, 'd--', linewidth=4, markersize=9, label='Linear + PM / Bayes', color='C5')
+    ax2.semilogx(prior_variance_list, ratio_quad, 's--', linewidth=4, markersize=9, label='Quadratic / Bayes', color='C1')
+    ax2.semilogx(prior_variance_list, ratio_quad_bayes, 's--', linewidth=4, markersize=9, label='Quadratic + PM / Bayes', color='C6')
+    #ax2.semilogx(prior_variance_list, ratio_cubic, '^:', linewidth=4, markersize=9, label='Cubic / Bayes', color='C2')
+    #ax2.semilogx(prior_variance_list, ratio_cubic_bayes, '^--', linewidth=4, markersize=9, label='Cubic PM / Bayes', color='C7')
+    ax2.semilogx(prior_variance_list, ratio_homodyne, 'v-.', linewidth=4, markersize=9, label=f'x Homodyne / Bayes', color='C8')
     ax2.set_xlabel('Prior variance $\\sigma^2$', fontsize=20)
     ax2.set_ylabel('MSL Ratio', fontsize=20)
     ax2.legend(fontsize=20)
@@ -655,6 +691,24 @@ if __name__ == '__main__':
     fig2.savefig(f'{output_dir}/squeezing_ratio_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
     fig2.savefig(f'{output_dir}/squeezing_ratio_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
     print(f"Saved: {output_dir}/squeezing_ratio_vs_variance_{ref_state_type}.png")
+
+    #Quadratic coefficients vs prior variance
+    fig3, ax3 = plt.subplots(figsize=(8, 6))
+    quad_labels = ['I', 'x', 'p', 'x²', '(xp+px)/2', 'p²']
+    alpha_quad_array = np.array(alpha_opt_quad_list)
+    for i in range(alpha_quad_array.shape[1]):
+        ax3.semilogx(prior_variance_list, alpha_quad_array[:, i], 'o-', linewidth=4, markersize=9, label=quad_labels[i])
+    ax3.set_xlabel('Prior variance $\\sigma^2$', fontsize=20)
+    ax3.set_ylabel('Optimal coefficient $\\alpha$', fontsize=20)
+    ax3.legend(fontsize=20,loc='lower left', ncol=2)
+    ax3.tick_params(axis='both', which='major',length=10, width=2, labelsize=20)
+    ax3.tick_params(axis='both', which='minor', length=6, width=1.5)
+    #ax3.grid(True, which='both', alpha=0.3)
+    ax3.grid(False)
+    fig3.tight_layout()
+    fig3.savefig(f'{output_dir}/squeezing_quad_coefficients_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
+    fig3.savefig(f'{output_dir}/squeezing_quad_coefficients_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
+    print(f"Saved: {output_dir}/squeezing_quad_coefficients_vs_variance_{ref_state_type}.png")
     """
 
     plt.show()
