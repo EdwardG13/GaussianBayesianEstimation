@@ -8,6 +8,7 @@ where S(theta) = exp[theta/2 (a^2 - (a^dagger)^2)]
 
 """
 import os
+import math
 from pathlib import Path
 import numpy as np
 import scipy.linalg as la
@@ -394,9 +395,9 @@ def compute_sigma(theta_sigma):
 N = 20 # Fock truncation 
 
 # Reference state parameters
-ref_state_type = 'squeezed_vacuum'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
+ref_state_type = 'coherent'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
 x0, p0 = 0.0, 0.0  # Initial mean position
-alpha_coherent = 0.5+0.5j  # Coherent state amplitude (if coherent)
+alpha_coherent = 0.1+0.5j # Coherent state amplitude (if coherent)
 n_thermal = 0.2  # Thermal photons (if thermal)
 r_squeeze = 0.4  # Squeezing parameter (if squeezed)
 phi_squeeze = 0.0  # Squeezing angle (0 for x-squeezed)
@@ -407,7 +408,7 @@ theta0 = 0.1     # Prior mean/center for theta
 theta_pts = 2000    # Number of grid points for theta
 sigma_pts = 10 # Number of prior standard deviation grid points
 
-safety_factor=10 # Ensures Fock truncation is enough
+safety_factor=5 # Ensures Fock truncation is enough
 params = design_parameters(N, ref_state_type,alpha_coherent,n_thermal,r_squeeze,theta0,sigma_pts,safety_factor)
 
 theta_min=params['theta_min'] # Prior range
@@ -415,7 +416,10 @@ theta_max=params['theta_max']
 sigma_max=params['sigma_max'] # Max standard deviation of a Gaussian prior which is 99.7% contained in the prior range
 theta_sigma_values=params['theta_sigma_values'] # Range of prior widths to test
 
-phi_homodyne=0 # Angle of homodyne measurement. 0 and pi/2 corresponds to x and p quadratures respectively.
+phi_homodyne=0 # Angle of homodyne measurement. 0 and pi/2 corresponds to x and p quadratures respectively
+
+if ref_state_type == 'coherent':
+    phi_homodyne=math.atan2(np.imag(alpha_coherent),np.real(alpha_coherent)) # For a coherent probe state, take the homodyne in the direction of displacement
 
 # Ladder operators in truncated Fock basis
 a = np.zeros((N, N), dtype=complex)
@@ -582,14 +586,14 @@ if __name__ == '__main__':
     ratio_homodyne = msl_homodyne_arr / msl_bayes_arr
     
     ax2.axhline(y=1, color='C0', linestyle='-', linewidth=2, alpha=0.5, label='Bayes (ratio=1)')
-    ax2.semilogx(prior_variance_list, ratio_linear, 'd--', linewidth=2, markersize=7, label='Linear / Bayes', color='C3')
-    ax2.semilogx(prior_variance_list, ratio_quad, 's--', linewidth=2, markersize=7, label='Quadratic / Bayes', color='C1')
-    ax2.semilogx(prior_variance_list, ratio_cubic, '^--', linewidth=2, markersize=7, label='Cubic / Bayes', color='C2')
-    ax2.semilogx(prior_variance_list, ratio_linear_bayes, 'd--', linewidth=2, markersize=7, label='Linear + PM / Bayes', color='C5')
-    ax2.semilogx(prior_variance_list, ratio_quad_bayes, 's--', linewidth=2, markersize=7, label='Quad + PM / Bayes', color='C6')
-    ax2.semilogx(prior_variance_list, ratio_cubic_bayes, '^--', linewidth=2, markersize=7, label='Cubic + PM / Bayes', color='C7')
-    ax2.semilogx(prior_variance_list, ratio_prior, '^:', linewidth=2, markersize=7, label='Prior / Bayes', color='C4')
-    ax2.semilogx(prior_variance_list, ratio_homodyne, 'v--', linewidth=2, markersize=7, label=f'Homodyne {phi_unicode}={phi_homodyne:.2f} / Bayes', color='C8')
+    ax2.semilogx(prior_variance_list, ratio_linear, 'd--', linewidth=2, markersize=7, label='Linear', color='C3')
+    ax2.semilogx(prior_variance_list, ratio_quad, 's--', linewidth=2, markersize=7, label='Quadratic', color='C1')
+    #ax2.semilogx(prior_variance_list, ratio_cubic, '^--', linewidth=2, markersize=7, label='Cubic', color='C2')
+    ax2.semilogx(prior_variance_list, ratio_linear_bayes, 'd--', linewidth=2, markersize=7, label='Linear + PM ', color='C5')
+    ax2.semilogx(prior_variance_list, ratio_quad_bayes, 's--', linewidth=2, markersize=7, label='Quad + PM', color='C6')
+    #ax2.semilogx(prior_variance_list, ratio_cubic_bayes, '^--', linewidth=2, markersize=7, label='Cubic + PM', color='C7')
+    ax2.semilogx(prior_variance_list, ratio_prior, '^:', linewidth=2, markersize=7, label='Prior', color='C4')
+    ax2.semilogx(prior_variance_list, ratio_homodyne, 'v--', linewidth=2, markersize=7, label=f'Homodyne {phi_unicode}={phi_homodyne:.2f}', color='C8')
 
 
     ax2.set_xlabel('Prior variance $\\sigma^2$', fontsize=11)
@@ -636,29 +640,29 @@ if __name__ == '__main__':
     Images are saved to figs/{}.
     """
 
-    """
+    
     # Create output directory if it doesn't exist
     output_dir = Path(__file__).parent / "figs"
     output_dir.mkdir(exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
     # Plot 1: MSL vs prior variance
-    fig1, ax1 = plt.subplots(figsize=(8, 6))
-    ax1.loglog(prior_variance_list, msl_bayes_arr, 'o-', linewidth=3.5, markersize=10, label='Bayes-optimal', color='C0')
-    ax1.loglog(prior_variance_list, msl_linear_arr, 'd--', linewidth=3, markersize=9, label='Linear', color='C3')
-    ax1.loglog(prior_variance_list, msl_quad_arr, 's--', linewidth=3, markersize=9, label='Quadratic', color='C1')
-    #ax1.loglog(prior_variance_list, msl_cubic_arr, '^:', linewidth=3, markersize=9, label='Cubic', color='C2')
-    ax1.loglog(prior_variance_list, msl_prior_arr, '^:', linewidth=3, markersize=9, label='Prior', color='C4')
-    ax1.set_xlabel('Prior variance $\\sigma^2$', fontsize=20)
-    ax1.set_ylabel('Minimum MSL (MSE)', fontsize=20)
-    ax1.legend(fontsize=20)
-    ax1.tick_params(axis='both', which='major',length=10, width=2, labelsize=20)
-    ax1.tick_params(axis='both', which='minor', length=6, width=1.5)
-    ax1.grid(False)
-    fig1.tight_layout()
+    # fig1, ax1 = plt.subplots(figsize=(8, 6))
+    # ax1.loglog(prior_variance_list, msl_bayes_arr, 'o-', linewidth=3.5, markersize=10, label='Bayes-optimal', color='C0')
+    # ax1.loglog(prior_variance_list, msl_linear_arr, 'd--', linewidth=3, markersize=9, label='Linear', color='C3')
+    # ax1.loglog(prior_variance_list, msl_quad_arr, 's--', linewidth=3, markersize=9, label='Quadratic', color='C1')
+    # #ax1.loglog(prior_variance_list, msl_cubic_arr, '^:', linewidth=3, markersize=9, label='Cubic', color='C2')
+    # ax1.loglog(prior_variance_list, msl_prior_arr, '^:', linewidth=3, markersize=9, label='Prior', color='C4')
+    # ax1.set_xlabel('Prior variance $\\sigma^2$', fontsize=20)
+    # ax1.set_ylabel('Minimum MSL (MSE)', fontsize=20)
+    # ax1.legend(fontsize=20)
+    # ax1.tick_params(axis='both', which='major',length=10, width=2, labelsize=20)
+    # ax1.tick_params(axis='both', which='minor', length=6, width=1.5)
+    # ax1.grid(False)
+    # fig1.tight_layout()
     #fig1.savefig(f'{output_dir}/squeezing_msl_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
     #fig1.savefig(f'{output_dir}/squeezing_msl_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
     #print(f"Saved: {output_dir}/squeezing_msl_vs_variance_{ref_state_type}.png")
-
+    
 
     # Plot 2: Ratio to Bayes-optimal
     fig2, ax2 = plt.subplots(figsize=(8, 6))
@@ -671,27 +675,28 @@ if __name__ == '__main__':
     ratio_cubic_bayes = msl_cubic_bayes_arr / msl_bayes_arr
     ratio_homodyne = msl_homodyne_arr / msl_bayes_arr
 
-    ax2.axhline(y=1, color='C0', linestyle='-', linewidth=4, alpha=0.6, label='Bayes (ratio=1)')
-    ax2.semilogx(prior_variance_list, ratio_prior, '^:', linewidth=4, markersize=9, label='Prior / Bayes', color='C4')
-    ax2.semilogx(prior_variance_list, ratio_linear, 'd--', linewidth=4, markersize=9, label='Linear / Bayes', color='C3')
-    ax2.semilogx(prior_variance_list, ratio_linear_bayes, 'd--', linewidth=4, markersize=9, label='Linear + PM / Bayes', color='C5')
-    ax2.semilogx(prior_variance_list, ratio_quad, 's--', linewidth=4, markersize=9, label='Quadratic / Bayes', color='C1')
-    ax2.semilogx(prior_variance_list, ratio_quad_bayes, 's--', linewidth=4, markersize=9, label='Quadratic + PM / Bayes', color='C6')
-    #ax2.semilogx(prior_variance_list, ratio_cubic, '^:', linewidth=4, markersize=9, label='Cubic / Bayes', color='C2')
-    #ax2.semilogx(prior_variance_list, ratio_cubic_bayes, '^--', linewidth=4, markersize=9, label='Cubic PM / Bayes', color='C7')
-    ax2.semilogx(prior_variance_list, ratio_homodyne, 'v-.', linewidth=4, markersize=9, label=f'x Homodyne / Bayes', color='C8')
-    ax2.set_xlabel('Prior variance $\\sigma^2$', fontsize=20)
-    ax2.set_ylabel('MSL Ratio', fontsize=20)
-    ax2.legend(fontsize=20)
-    ax2.tick_params(axis='both', which='major',length=10, width=2, labelsize=20)
+    lw_main = 5
+
+    ax2.set_facecolor('#f7f7f7')
+    ax2.axhline(1, color='black', linewidth=lw_main)
+    ax2.semilogx(prior_variance_list, ratio_prior,linestyle='-.', linewidth=lw_main,color="#959ba0", label='Prior')
+    ax2.semilogx(prior_variance_list, ratio_linear,linestyle='--', linewidth=lw_main,color="#d62728", label='Linear')
+    ax2.semilogx(prior_variance_list, ratio_linear_bayes,linestyle='-', linewidth=lw_main,color="#d62728", label='Linear (PM)')
+    ax2.semilogx(prior_variance_list, ratio_quad,linestyle='--', linewidth=lw_main,color="#2ca02c", label='Quadratic')
+    ax2.semilogx(prior_variance_list, ratio_quad_bayes,linestyle='-', linewidth=lw_main,color="#2ca02c", label='Quadratic (PM)')
+    ax2.semilogx(prior_variance_list, ratio_homodyne,linestyle=':', linewidth=lw_main,color="#2E7CC5", label=f'Homodyne {phi_unicode}={phi_homodyne:.2f}')
+    ax2.set_xlabel('Prior variance $\\sigma^2$', fontsize=20) 
+    ax2.set_ylabel('MSL Ratio', fontsize=20) 
+    ax2.legend(fontsize=20) 
+    ax2.tick_params(axis='both', which='major',length=10, width=2, labelsize=20) 
     ax2.tick_params(axis='both', which='minor', length=6, width=1.5)
-    ax2.ticklabel_format(axis='y', style='plain', useOffset=False) # Stops Matplotlib from factoring out +1 from the Bayes ratio on the y axis.
     ax2.grid(False)
     fig2.tight_layout()
     fig2.savefig(f'{output_dir}/squeezing_ratio_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
     fig2.savefig(f'{output_dir}/squeezing_ratio_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
     print(f"Saved: {output_dir}/squeezing_ratio_vs_variance_{ref_state_type}.png")
 
+    """
     #Quadratic coefficients vs prior variance
     fig3, ax3 = plt.subplots(figsize=(8, 6))
     quad_labels = ['I', 'x', 'p', 'x²', '(xp+px)/2', 'p²']
