@@ -92,14 +92,15 @@ def design_parameters(N, ref_state_type, alpha=1.0, n_th=0.2, r=0.4, theta0=0.5,
         theta_max = 0.5 * np.log(2 * n_budget / (n_th + 0.5)) - r
     
     # Prior and grid
-    sigma_max = 2*(theta_max - abs(theta0)) / 3 # The maximum standard deviation of a Gaussian prior that ensures the prior doesn't put significant weight beyond theta_max.
+    sigma_max = (theta_max - abs(theta0)) / 4 # The maximum standard deviation of a Gaussian prior that ensures the theta_grid contains the prior.
     theta_min = 2*theta0 -  theta_max
 
-    dtheta = (theta_max - theta_min) / theta_pts
-    sigma_min = 10*dtheta  # prior must cover at least 10 grid spacings
+    #dtheta = (theta_max - theta_min) / theta_pts
+    #sigma_min = 10*dtheta  # prior must cover at least 10 grid spacings
+    sigma_min=10**(-1.5) # Use this for now
+    #theta_sigma_values = np.logspace(np.log10(sigma_min), np.log10(sigma_max), sigma_pts) # Create a prior grid with sigma_pts
 
-    theta_sigma_values = np.logspace(np.log10(sigma_min), np.log10(sigma_max), sigma_pts) # Create a prior grid with sigma_pts
-    #theta_sigma_values = np.logspace(-1.5, np.log10(sigma_max), sigma_pts)
+    theta_sigma_values = np.logspace(np.log10(sigma_min), np.log10(sigma_max), sigma_pts)
     
     return {
         'theta_min': theta_min,
@@ -319,6 +320,52 @@ def relative_msl_via_norm(S_op_ansatz, S_bayes, rho0, rho1, lambda_val):
     msl_bayes = lambda_val - np.real(np.trace(rho0 @ S_bayes @ S_bayes))
     return norm_sq / msl_bayes, M1
 
+def check_S2_containment(rho_ref, theta0, basis):
+    """
+    Test whether S_2 = SLD(theta0) lies in the operator subspace V = span(basis).
+    
+    Returns: relative residual ||(1-Pi_V)SLD||_rho(mu) / ||SLD||_rho(mu)
+    If < 1e-6, conclude S_2 in V => excess MSL ~ sigma^8 (not sigma^4).
+    """
+    I = np.eye(N, dtype=complex)
+    h = 1e-5
+    
+    def rho_r(r):
+        S = squeeze_op(r,0)
+        r = S @ rho_ref @ S.conj().T
+        return 0.5*(r + r.conj().T)
+    
+    rho_mu = rho_r(theta0)
+    # 4th-order finite difference for rho'(theta0)
+    drho = (-rho_r(theta0+2*h) + 8*rho_r(theta0+h)
+            - 8*rho_r(theta0-h) + rho_r(theta0-2*h)) / (12*h)
+    drho = 0.5*(drho + drho.conj().T)
+    
+    # SLD: solve {L, rho_mu} = 2 drho
+    dim = N*N
+    Lm = np.kron(np.eye(N), rho_mu) + np.kron(rho_mu.T, np.eye(N))
+    eps = 1e-13 * np.linalg.norm(Lm, 'fro')
+    SLD_vec = la.solve(Lm + eps*np.eye(dim), 2.0*drho.reshape(dim, order='F'))
+    SLD = SLD_vec.reshape((N,N), order='F')
+    SLD = 0.5*(SLD + SLD.conj().T)
+    
+    # Project SLD onto V w.r.t. rho_mu-weighted inner product
+    m = len(basis)
+    G = np.zeros((m,m)); bv = np.zeros(m)
+    for i in range(m):
+        for j in range(m):
+            G[i,j] = 0.5*np.real(np.trace(
+                basis[i]@rho_mu@basis[j] + basis[i]@basis[j]@rho_mu))
+        bv[i] = 0.5*np.real(np.trace(
+            basis[i]@rho_mu@SLD + basis[i]@SLD@rho_mu))
+    alpha, *_ = la.lstsq(G, bv)
+    SLD_proj = sum(alpha[k]*basis[k] for k in range(m))
+    
+    residual = SLD - SLD_proj
+    def wn(A): return np.sqrt(max(0, np.real(np.trace(A @ rho_mu @ A))))
+    
+    return wn(residual) / wn(SLD), alpha
+
 
 def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     """
@@ -366,9 +413,15 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     
     # ---------------- Exact Bayes S (Fock basis) ---------------
     dim = N * N
-    A_big = np.kron(np.eye(N), rho0) + np.kron(rho0.T, np.eye(N))
+    lyapunov_rhs = np.kron(np.eye(N), rho0) + np.kron(rho0.T, np.eye(N))
     vecrho1 = rho1.reshape(dim, order='F')
-    vecS_bayes = la.pinv(A_big) @ (2.0 * vecrho1)
+    vecS_bayes = la.pinv(lyapunov_rhs) @ (2.0 * vecrho1)
+
+    # Replace la.pinv with regularised solve
+    # epsilon_reg = 1e-10
+    # lyapunov_reg = lyapunov_rhs + epsilon_reg * np.eye(N*N)
+    # vecS_bayes = la.solve(lyapunov_reg, 2.0 * vecrho1)
+
     S_bayes = vecS_bayes.reshape((N, N), order='F')
     S_bayes = 0.5 * (S_bayes + S_bayes.conj().T)
     
@@ -398,6 +451,8 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     B_cubic.append(0.5 * (x @ x @ p + p @ x @ x))
     B_cubic.append(0.5 * (x @ p @ x + p @ x @ p))
     B_cubic = [0.5 * (M + M.conj().T) for M in B_cubic]
+
+    #B_cubic = [I, x @ x, 0.5 * (x @ p + p @ x), p @ p]
     
     alpha_opt_cubic, G_mat_cubic, b_vec_cubic = get_optimal_coefficients(rho0, rho1, B_cubic)
     msl_cubic = lambda_val - b_vec_cubic @ la.pinv(G_mat_cubic) @ b_vec_cubic
@@ -503,12 +558,15 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     x_phi = x * np.cos(phi_homodyne) + p * np.sin(phi_homodyne)
     Lr_homodyne, M1_homodyne = relative_msl_via_norm(x_phi, S_bayes, rho0, rho1, lambda_val)
 
-    # Sanity check: Lr should equal (msl_ansatz - msl_bayes) / msl_bayes
-    
+    residual,alp=check_S2_containment(rho_ref, theta0, B_quad)
+
+    print(f"||SLD-SLD_proj||/||SLD||{residual:.4e}")
+
+
     #return (msl_bayes, msl_linear, msl_quad, msl_cubic, alpha_opt_linear, alpha_opt_quad, alpha_opt_cubic, prior_var)
     return (msl_bayes, msl_linear, msl_quad, msl_cubic, alpha_opt_linear, alpha_opt_quad, alpha_opt_cubic,
              prior_var,alpha_opt_prior,msl_prior,msl_linear_bayes,msl_quad_bayes,msl_cubic_bayes,msl_homodyne,
-             msl_linear_analytic,msl_quad_analytic,alpha_opt_quad_analytic,Lr_linear, M1_linear,Lr_quad, M1_quad,Lr_homodyne, M1_homodyne)
+             msl_linear_analytic,msl_quad_analytic,alpha_opt_quad_analytic,Lr_linear, M1_linear,Lr_quad, M1_quad,Lr_homodyne, M1_homodyne,S_bayes,S_quad,rho0)
 
 def compute_sigma(theta_sigma):
     # Function used for parallel loop
@@ -521,7 +579,7 @@ def compute_sigma(theta_sigma):
 # -------------------------- User parameters --------------------------
 N = 30 # Fock truncation 
 
-# Reference state parameters
+# Reference/prove state parameters
 ref_state_type = 'coherent'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
 x0, p0 = 0.0, 0.0  # Initial mean position
 alpha_coherent = 0.1+0.5j # Coherent state amplitude (if coherent)
@@ -532,8 +590,8 @@ phi_squeeze = 0.0  # Squeezing angle (0 for x-squeezed)
 # Prior settings
 prior_type = 'gaussian'  # Options: 'gaussian', 'two_gaussian', or 'uniform'
 theta0 = 0.1     # Prior mean for theta
-theta_pts = 1000    # Number of grid points for theta
-sigma_pts = 10 # Number of prior standard deviation grid points
+theta_pts = 2000    # Number of grid points for theta
+sigma_pts = 20 # Number of prior standard deviation grid points
 
 safety_factor=5 # Ensures Fock truncation is enough (5 is safe)
 params = design_parameters(N, ref_state_type,alpha_coherent,n_thermal,r_squeeze,theta0,sigma_pts,safety_factor)
@@ -588,6 +646,12 @@ if __name__ == '__main__':
     Lr_homodyne_list=[]
     M1_homodyne_list=[]
 
+    S_bayes_list=[]
+    S_quad_list=[]
+
+    rho0_list=[]
+
+
     # Old (series) loop over prior widths
     """
     for i, theta_sigma in enumerate(theta_sigma_values):
@@ -626,7 +690,7 @@ if __name__ == '__main__':
     print(f"Prior type: {prior_type}")
     print(f"Prior center: theta = {theta0}")
     print(f"{theta_unicode} range: [{params['theta_min']:.2f}, {params['theta_max']:.2f}]")
-    print(f"{sigma_unicode} range: [{params['sigma_min']:.2f}, {params['sigma_max']:.2f}]")
+    print(f"{sigma_unicode} range: [{params['sigma_min']:.2e}, {params['sigma_max']:.2e}]")
     print("="*70)
 
 
@@ -642,7 +706,7 @@ if __name__ == '__main__':
         ))
 
     for res in results:
-        msl_b, msl_l, msl_q, msl_c, alpha_l, alpha_q, alpha_c, prior_var,alpha_prior,msl_prior,msl_bayes_l,msl_bayes_q,msl_bayes_c,msl_hom,msl_l_analytic,msl_q_analytic,alpha_q_analytic,Lr_l,M1_l,Lr_q,M1_q,Lr_h,M1_h = res
+        msl_b, msl_l, msl_q, msl_c, alpha_l, alpha_q, alpha_c, prior_var,alpha_prior,msl_prior,msl_bayes_l,msl_bayes_q,msl_bayes_c,msl_hom,msl_l_analytic,msl_q_analytic,alpha_q_analytic,Lr_l,M1_l,Lr_q,M1_q,Lr_h,M1_h,S_b,S_q,r0 = res
         msl_bayes_list.append(msl_b)
         msl_linear_list.append(msl_l)
         msl_quad_list.append(msl_q)
@@ -672,6 +736,12 @@ if __name__ == '__main__':
         Lr_homodyne_list.append(Lr_h)
         M1_homodyne_list.append(M1_h)
 
+        S_bayes_list.append(S_b)
+        S_quad_list.append(S_q)
+
+        rho0_list.append(r0)
+        
+
 
     # Convert to arrays
     prior_variance_list = np.array(prior_variance_list)
@@ -698,6 +768,10 @@ if __name__ == '__main__':
     M1_quad_arr=np.array(M1_quad_list)
     Lr_homodyne_arr=np.array(Lr_homodyne_list)
     M1_homodyne_arr=np.array(M1_homodyne_list)
+
+    rho0_arr=np.array(rho0_list)
+
+
 
     """
     Three individual plots of 1) the MSL 2) the ratio of the MSL to the global optimum and 3) the optimal constrained coefficients, as a function of the prior width.
@@ -748,6 +822,8 @@ if __name__ == '__main__':
     ax2.loglog(prior_variance_list, ratio_linear_bayes,linestyle='-', linewidth=lw_main,color="#d62728", label='Linear (PM)')
     ax2.loglog(prior_variance_list, ratio_quad,linestyle='--', linewidth=lw_main,color="#2ca02c", label='Quadratic')
     ax2.loglog(prior_variance_list, ratio_quad_bayes,linestyle='-', linewidth=lw_main,color="#2ca02c", label='Quadratic (PM)')
+    #ax2.semilogx(prior_variance_list, ratio_cubic,linestyle='--', linewidth=lw_main,color="#C52EA4", label=f'Cubic')
+    #ax2.semilogx(prior_variance_list, ratio_cubic_bayes,linestyle='-', linewidth=lw_main,color="#C52EA4", label=f'Cubic (PM)')
     ax2.loglog(prior_variance_list, ratio_homodyne,linestyle='-.', linewidth=lw_main,color="#1670C4", label=f'Homodyne {phi_unicode}={phi_homodyne:.2f}')
     #ax2.semilogx(prior_variance_list, ratio_linear_analytic,linestyle='--', linewidth=lw_main,color="#A4C52E", label=f'Linear Analytic')
     #ax2.semilogx(prior_variance_list, ratio_quad_analytic,linestyle='--', linewidth=lw_main,color="#C52EA4", label=f'Quadratic Analytic')
@@ -890,7 +966,6 @@ if __name__ == '__main__':
 
     plt.suptitle(f'Squeezing Estimation: {ref_state_type} state, {prior_type} prior', fontsize=14, y=0.995)
     """
-
     plt.show()
 
 
@@ -912,3 +987,33 @@ if __name__ == '__main__':
     basis_labels_quad = ['I', 'x', 'p', 'x²', '(xp+px)/2', 'p²']
     for i, label in enumerate(basis_labels_quad):
         print(f"  {alpha_unicode}[{label}] = {alpha_opt_quad_list[-1][i]:+.6f}")
+
+
+    ## Checking MSL small prior width scaling
+    list_prop = 0.5
+
+    grad_bayes, c_bayes =  np.polyfit(np.log(theta_sigma_values[1:int(list_prop*sigma_pts)]),np.log(msl_bayes_arr[1:int(list_prop*sigma_pts)]),1)
+    grad_linear, c_linear =  np.polyfit(np.log(theta_sigma_values[1:int(list_prop*sigma_pts)]),np.log(msl_linear_arr[1:int(list_prop*sigma_pts)]-msl_bayes_arr[1:int(list_prop*sigma_pts)]),1)
+    grad_quad, c_quad=  np.polyfit(np.log(theta_sigma_values[1:int(list_prop*sigma_pts)]),np.log(msl_quad_arr[1:int(list_prop*sigma_pts)]-msl_bayes_arr[1:int(list_prop*sigma_pts)]),1)
+
+    grad_linearLr, c_linearLr =  np.polyfit(np.log(theta_sigma_values[1:int(list_prop*sigma_pts)]),np.log(ratio_linear[1:int(list_prop*sigma_pts)]),1)
+    grad_quadLr, c_quadLr=  np.polyfit(np.log(theta_sigma_values[1:int(list_prop*sigma_pts)]),np.log(ratio_quad[1:int(list_prop*sigma_pts)]),1)
+
+    print(f"  Bayes:          m={grad_bayes:.2f}, c={c_bayes:.2f}")
+    print(f"  Linear:         m={grad_linear:.2f}, c={c_linear:.2f}")
+    print(f"  Quad:           m={grad_quad:.2f}, c={c_quad:.2f}")
+    print(f"  Linear Lr:      m={grad_linearLr:.2f}, c={c_linearLr:.2f}")
+    print(f"  Quad Lr:        m={grad_quadLr:.2f}, c={c_quadLr:.2f}")
+
+    
+    norms_diff = np.array([
+        np.sqrt(np.real(np.trace(
+            (S_bayes_list[i] - S_quad_list[i]) @ rho0_arr[i] @ (S_bayes_list[i] - S_quad_list[i])
+        )))
+        for i in range(len(theta_sigma_values))
+    ])
+    grad_diff, c_diff = np.polyfit(
+    np.log(theta_sigma_values[1:int(list_prop*sigma_pts)]),
+    np.log(norms_diff[1:int(list_prop*sigma_pts)]),1)
+    print(f"||S - S_V|| slope: m={grad_diff:.2f}")
+

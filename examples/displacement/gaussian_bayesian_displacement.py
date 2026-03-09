@@ -76,8 +76,8 @@ def design_parameters(N, ref_state_type, alpha=1.0, n_th=0.2, r=0.4, theta0=0.5,
     theta_max = np.sqrt(2 * n_budget)
     
     #  Prior and grid
-    sigma_max = (theta_max - abs(theta0)) / 3 # The maximum standard deviation of a Gaussian prior that ensures the prior doesn't put significant weight beyond theta_max.
-    theta_min = theta0 - 3 * sigma_max
+    sigma_max = (theta_max - abs(theta0)) / 4 # The maximum standard deviation of a Gaussian prior that ensures the theta_grid contains the prior.
+    theta_min = 2*theta0 -  theta_max
     
     theta_sigma_values = np.logspace(-1.5, np.log10(sigma_max), sigma_pts) # Create a prior grid with sigma_pts
     
@@ -159,7 +159,11 @@ def get_prior(theta_grid, prior_type, theta0, theta_sigma, theta_min, theta_max)
 
     elif prior_type == 'two_gaussian':
         prior_unnorm = np.exp(-0.5 * ((theta_grid - theta0) / theta_sigma)**2) + 2*np.exp(-0.5 * ((theta_grid - 2*theta0) / theta_sigma)**2)
-
+    elif prior_type == 'uniform':
+        prior_unnorm = np.zeros_like(theta_grid)
+        # find indices within the uniform window
+        idx = (theta_grid >= theta0 - theta_sigma) & (theta_grid <= theta0 + theta_sigma)
+        prior_unnorm[idx] = 1
     else:
         raise ValueError(f"Unknown prior type: {prior_type}")
     
@@ -168,7 +172,7 @@ def get_prior(theta_grid, prior_type, theta0, theta_sigma, theta_min, theta_max)
     if total > 1e-100:
         prior = prior_unnorm / total
     else:
-        print(f"Warning: Prior normalization failed for {prior_type}, using uniform")
+        print(f"Warning: Prior normalisation failed for {prior_type}, using uniform")
         prior = np.ones_like(theta_grid) / (theta_max - theta_min)
     
     return prior
@@ -281,6 +285,7 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     vecS_bayes = la.pinv(A_big) @ (2.0 * vecrho1)
     S_bayes = vecS_bayes.reshape((N, N), order='F')
     S_bayes = 0.5 * (S_bayes + S_bayes.conj().T)
+    #S_bayes = la.solve_continuous_lyapunov(rho0 + 1e-12 * np.eye(N), 2 * rho1)
     
     msl_bayes = lambda_val - np.real(np.trace(rho0 @ (S_bayes @ S_bayes)))
     
@@ -311,6 +316,10 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     alpha_opt_cubic, G_mat_cubic, b_vec_cubic = get_optimal_coefficients(rho0, rho1, B_cubic)
     msl_cubic = lambda_val - b_vec_cubic @ la.pinv(G_mat_cubic) @ b_vec_cubic
 
+    # ---------------- Prior information -----------------------
+    B_prior =[I]
+    alpha_opt_prior, G_mat_prior, b_vec_prior = get_optimal_coefficients(rho0, rho1, B_prior)
+    msl_prior = lambda_val - b_vec_prior @ la.pinv(G_mat_prior) @ b_vec_prior
 
     # ---------------- Constrained PVM + Posterioir mean MSL ---------------
     # Linear ansatz 
@@ -331,7 +340,7 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
 
     
     return (msl_bayes, msl_linear, msl_quad, msl_cubic, 
-            alpha_opt_linear, alpha_opt_quad, alpha_opt_cubic, prior_var,msl_linear_bayes,msl_quad_bayes,msl_cubic_bayes)
+            alpha_opt_linear, alpha_opt_quad, alpha_opt_cubic, prior_var,msl_linear_bayes,msl_quad_bayes,msl_cubic_bayes,msl_prior)
 
 
 def compute_sigma(theta_sigma): 
@@ -342,7 +351,7 @@ def compute_sigma(theta_sigma):
 
 # --------------------- User parameters ---------------------
 
-N = 20 # Fock truncation 
+N = 30 # Fock truncation 
 
 # Reference state parameters (before displacement)
 ref_state_type = 'squeezed_vacuum'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
@@ -353,7 +362,7 @@ r_squeeze = 0.4  # Squeezing parameter
 phi_squeeze = 0.0  # Squeezing angle (0 for x-squeezed)
 
 # Prior settings
-prior_type = 'gaussian'  # Options: 'gaussian' or 'two_gaussian'
+prior_type = 'uniform'  # Options: 'gaussian', 'two_gaussian', or 'uniform'
 theta0 = 0.1     # Prior mean/center for theta
 theta_pts = 2000    # Number of grid points for theta
 sigma_pts = 10 # Number of prior standard deviation grid points
@@ -382,6 +391,7 @@ if __name__ == '__main__':
 
     # Initialise lists 
     msl_bayes_list = []
+    msl_prior_list = []
     msl_linear_list = []
     msl_quad_list = []
     msl_cubic_list = []
@@ -404,8 +414,8 @@ if __name__ == '__main__':
         print(f"  r = {r_squeeze}, phi = {phi_squeeze}")
     print(f"Prior type: {prior_type}")
     print(f"Prior center: theta = {theta0}")
-    print(f"{theta_unicode} range: [{params['theta_min']:.2f}, {params['theta_max']:.2f}]")
-    print(f"{sigma_unicode}_max: {params['sigma_max']:.2f}")
+    #print(f"{theta_unicode} range: [{params['theta_min']:.2f}, {params['theta_max']:.2f}]")
+    #print(f"{sigma_unicode}_max: {params['sigma_max']:.2f}")
     print("="*70)
 
     # Loop over prior widths
@@ -439,8 +449,9 @@ if __name__ == '__main__':
             unit="sigma"
         ))
     for res in results:
-        msl_b, msl_l, msl_q, msl_c, alpha_l, alpha_q, alpha_c, prior_var,msl_bayes_l,msl_bayes_q,msl_bayes_c= res
+        msl_b, msl_l, msl_q, msl_c, alpha_l, alpha_q, alpha_c, prior_var,msl_bayes_l,msl_bayes_q,msl_bayes_c,msl_prior= res
         msl_bayes_list.append(msl_b)
+        msl_prior_list.append(msl_prior)
         msl_linear_list.append(msl_l)
         msl_quad_list.append(msl_q)
         msl_cubic_list.append(msl_c)
@@ -456,6 +467,7 @@ if __name__ == '__main__':
 
     # Convert to arrays
     prior_variance_list = np.array(prior_variance_list)
+    msl_prior_arr = np.array(msl_prior_list)
     msl_bayes_arr = np.array(msl_bayes_list)
     msl_linear_arr = np.array(msl_linear_list)
     msl_quad_arr = np.array(msl_quad_list)
@@ -469,7 +481,7 @@ if __name__ == '__main__':
     Top left: MSL. Top right: ratio MSL to optimum.
     Bottom left: linear alpha. Bottom right: quadratic alpha 
     """
-
+    """
     fig = plt.figure(figsize=(16, 16))
     gs = fig.add_gridspec(2, 2)
 
@@ -550,7 +562,7 @@ if __name__ == '__main__':
     ax4.grid(False)
 
     plt.suptitle(f'Displacement Estimation: {ref_state_type} state, {prior_type} prior', fontsize=14, y=0.995)
-
+    """
 
 
     """
@@ -558,9 +570,11 @@ if __name__ == '__main__':
     """
 
     # Create output directory if it doesn't exist
-    # output_dir = Path(__file__).parent / "figs"
-    # output_dir.mkdir(exist_ok=True)
-    # os.makedirs(output_dir, exist_ok=True)
+    output_dir = Path(__file__).parent / "figs"
+    output_dir.mkdir(exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+
+
     # # Plot 1: MSL vs prior variance
     # fig1, ax1 = plt.subplots(figsize=(8, 6))
     # ax1.loglog(prior_variance_list, msl_bayes_arr, 'o-', linewidth=3.5, markersize=10, label='Bayes-optimal', color='C0')
@@ -580,23 +594,33 @@ if __name__ == '__main__':
 
 
     # Plot 2: Ratio to Bayes-optimal
-    # fig2, ax2 = plt.subplots(figsize=(8, 6))
-    # ratio_linear = msl_linear_arr / msl_bayes_arr
-    # ratio_quad = msl_quad_arr / msl_bayes_arr
-    # ratio_cubic = msl_cubic_arr / msl_bayes_arr
+    fig2, ax2 = plt.subplots(figsize=(8, 6))
+    ratio_prior = msl_prior_arr / msl_bayes_arr -1
+    
+    eps = 1e-10
+    ratio_linear = np.maximum((msl_linear_arr - msl_bayes_arr) / np.abs(msl_bayes_arr), eps) # Use a numerically stable version that floors near-zero
+    ratio_linear_bayes = np.maximum((msl_linear_bayes_arr- msl_bayes_arr) / np.abs(msl_bayes_arr), eps)
+    ratio_quad = np.maximum((msl_quad_arr - msl_bayes_arr) / np.abs(msl_bayes_arr), eps) 
+    ratio_quad_bayes = np.maximum((msl_quad_bayes_arr - msl_bayes_arr) / np.abs(msl_bayes_arr), eps) 
+    #ratio_cubic = msl_cubic_arr / msl_bayes_arr-1
 
-    # ax2.axhline(y=1, color='C0', linestyle='-', linewidth=3, alpha=0.6, label='Bayes (ratio=1)')
-    # ax2.semilogx(prior_variance_list, ratio_linear, 'd--', linewidth=3, markersize=9, label='Linear / Bayes', color='C3')
-    # ax2.semilogx(prior_variance_list, ratio_quad, 's--', linewidth=3, markersize=9, label='Quadratic / Bayes', color='C1')
-    # ax2.semilogx(prior_variance_list, ratio_cubic, '^:', linewidth=3, markersize=9, label='Cubic / Bayes', color='C2')
-    # ax2.set_xlabel('Prior variance $\\sigma^2$', fontsize=20)
-    # ax2.set_ylabel('MSL Ratio', fontsize=20)
-    # ax2.legend(fontsize=20)
-    # ax2.tick_params(axis='both', which='major',length=10, width=2, labelsize=20)
-    # ax2.tick_params(axis='both', which='minor', length=6, width=1.5)
-    # ax2.ticklabel_format(axis='y', style='plain', useOffset=False) # Stops Matplotlib from factoring out +1 from the Bayes ratio on the y axis.
-    # ax2.grid(False)
-    # fig2.tight_layout()
+    lw_main = 5
+
+    #ax2.axhline(y=1, color='C0', linestyle='-', linewidth=3, alpha=0.6, label='Bayes (ratio=1)')
+    ax2.loglog(prior_variance_list, ratio_prior,linestyle=':', linewidth=lw_main,color="#959ba0", label='Prior')
+    ax2.loglog(prior_variance_list, ratio_linear, '--', linewidth=lw_main, label='Linear ', color='#d62728')
+    ax2.loglog(prior_variance_list, ratio_linear_bayes, '-', linewidth=lw_main, label='Linear (PM)', color='#d62728')
+    #ax2.loglog(prior_variance_list, ratio_quad, '--', linewidth=lw_main, label='Quadratic', color='#2ca02c')
+    #ax2.loglog(prior_variance_list, ratio_quad_bayes, '-', linewidth=lw_main, label='Quadratic (PM)', color='#2ca02c')
+    #ax2.loglog(prior_variance_list, ratio_cubic, '-', linewidth=lw_main, label='Cubic', color='C2')
+    ax2.set_xlabel('$\\sigma^2$', fontsize=30)
+    ax2.set_ylabel('$\\mathcal{L}_R$', fontsize=30) 
+    ax2.legend(fontsize=20)
+    ax2.get_legend().remove()
+    ax2.tick_params(axis='both', which='major',length=10, width=2, labelsize=20)
+    ax2.tick_params(axis='both', which='minor', length=6, width=1.5)
+    ax2.grid(False)
+    fig2.tight_layout()
     # fig2.savefig(f'{output_dir}/ratio_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
     # fig2.savefig(f'{output_dir}/ratio_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
     # print(f"Saved: {output_dir}/ratio_vs_variance_{ref_state_type}.png")
@@ -604,7 +628,7 @@ if __name__ == '__main__':
 
     plt.show()
 
-
+    print(np.log(ratio_linear))
     # Print summary
     print("\n" + "="*70)
     print("Summary:")
@@ -617,7 +641,7 @@ if __name__ == '__main__':
     print(f"  Bayes-optimal: {msl_bayes_list[-1]:.6e}")
     print(f"  Linear:        {msl_linear_list[-1]:.6e} (ratio: {ratio_linear[-1]:.4f})")
     print(f"  Quadratic:     {msl_quad_list[-1]:.6e} (ratio: {ratio_quad[-1]:.4f})")
-    print(f"  Cubic:         {msl_cubic_list[-1]:.6e} (ratio: {ratio_cubic[-1]:.4f})")
+    #print(f"  Cubic:         {msl_cubic_list[-1]:.6e} (ratio: {ratio_cubic[-1]:.4f})")
 
     print(f"\nFinal optimal coefficients $\\alpha$:")
     basis_labels_quad = ['I', 'x', 'p', 'x²', '(xp+px)/2', 'p²']

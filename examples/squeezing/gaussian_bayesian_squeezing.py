@@ -365,9 +365,9 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     
     # ---------------- Exact Bayes S (Fock basis) ---------------
     dim = N * N
-    A_big = np.kron(np.eye(N), rho0) + np.kron(rho0.T, np.eye(N))
+    lyapunov_rhs = np.kron(np.eye(N), rho0) + np.kron(rho0.T, np.eye(N))
     vecrho1 = rho1.reshape(dim, order='F')
-    vecS_bayes = la.pinv(A_big) @ (2.0 * vecrho1)
+    vecS_bayes = la.pinv(lyapunov_rhs) @ (2.0 * vecrho1)
     S_bayes = vecS_bayes.reshape((N, N), order='F')
     S_bayes = 0.5 * (S_bayes + S_bayes.conj().T)
     

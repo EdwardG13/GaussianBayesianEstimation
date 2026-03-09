@@ -19,4 +19,4 @@ research/
 #!/examples/**/figs/ 
 
 # Mathematica files (for now)
-*.nb
+#*.nb
