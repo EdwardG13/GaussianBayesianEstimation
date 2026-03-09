@@ -560,7 +560,7 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
 
     residual,alp=check_S2_containment(rho_ref, theta0, B_quad)
 
-    print(f"||SLD-SLD_proj||/||SLD||{residual:.4e}")
+    #print(f"||SLD-SLD_proj||/||SLD||{residual:.4e}")
 
 
     #return (msl_bayes, msl_linear, msl_quad, msl_cubic, alpha_opt_linear, alpha_opt_quad, alpha_opt_cubic, prior_var)
@@ -580,8 +580,8 @@ def compute_sigma(theta_sigma):
 N = 30 # Fock truncation 
 
 # Reference/prove state parameters
-ref_state_type = 'coherent'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
-x0, p0 = 0.0, 0.0  # Initial mean position
+ref_state_type = 'vacuum'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
+x0, p0 = 0.5, 0.0  # Initial mean position
 alpha_coherent = 0.1+0.5j # Coherent state amplitude (if coherent)
 n_thermal = 0.2  # Thermal photons (if thermal)
 r_squeeze = 0.4  # Squeezing parameter (if squeezed)
