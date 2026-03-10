@@ -24,6 +24,7 @@ sigma2_unicode = '\u03C3\u00B2'
 alpha_unicode = '\u03B1'
 theta_unicode = '\u03B8'
 nbar_unicode = '\u0304n' 
+phi_unicode = '\u03D5'
 
 # ------------------------------------------------- Functions -------------------------------------------------
 
@@ -208,6 +209,18 @@ def thermal_state_varying(n_bar):
     return rho_th
 """
 
+def msl_homodyne_func(phi_homodyne, rho0, rho1, lambda_val):
+    """
+    Compute MSL for homodyne measurement at angle phi with posterior mean estimator.
+    
+    Homodyne at angle phi measures the quadrature: x_phi = x*cos(phi) + p*sin(phi)
+    """
+    # Construct rotated quadrature operator
+    x_phi = x * np.cos(phi_homodyne) + p * np.sin(phi_homodyne)
+    
+    # Homodyne is a PVM in the eigenbasis of x_phi
+    return msl_bayes_for_pvm(x_phi, rho0, rho1, lambda_val)
+
 def msl_bayes_for_pvm(S_op, rho0, rho1, lambda_val):
     """
     Compute Bayes MSL for the PVM defined by the spectral decomposition of S_op.
@@ -374,8 +387,13 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
 
     msl_linear_quad_analytic =  msl_bayes_for_pvm(S_linear_quad_analytic, rho0, rho1, lambda_val)
 
+    # Homodyne measurement at an angle phi + PM estimator
+    msl_homodyne = msl_homodyne_func(phi_homodyne, rho0, rho1, lambda_val)
+
     return (msl_bayes, msl_linear, msl_quad, msl_linear_quad, 
-            alpha_opt_linear, alpha_opt_quad, alpha_opt_linear_quad, prior_var,msl_linear_bayes,msl_quad_bayes,msl_linear_quad_bayes,msl_prior,msl_linear_quad_analytic)
+            alpha_opt_linear, alpha_opt_quad, alpha_opt_linear_quad, 
+            prior_var,msl_linear_bayes,msl_quad_bayes,msl_linear_quad_bayes,
+            msl_prior,msl_linear_quad_analytic,msl_homodyne)
 
 
 def compute_sigma(theta_sigma): 
@@ -411,6 +429,8 @@ theta_max=params['theta_max']
 sigma_max=params['sigma_max'] # Max standard deviation of a Gaussian prior which is 99.7% contained in the prior range
 theta_sigma_values=params['theta_sigma_values'] # Range of prior widths to test
 
+phi_homodyne=0 # Angle of homodyne measurement. 0 and pi/2 corresponds to x and p quadratures respectively
+
 # Ladder operators in truncated Fock basis
 a = np.zeros((N, N), dtype=complex)
 for n in range(1, N):
@@ -438,6 +458,7 @@ if __name__ == '__main__':
     msl_quad_bayes_list = []
     msl_linear_quad_bayes_list = []
     msl_linear_quad_analytic_list = []
+    msl_homodyne_list = []
 
     print("="*70)
     print(f"Estimating displacement theta along x quadrature")
@@ -485,7 +506,7 @@ if __name__ == '__main__':
             unit="sigma"
         ))
     for res in results:
-        msl_b, msl_l, msl_q, msl_c, alpha_l, alpha_q, alpha_c, prior_var,msl_bayes_l,msl_bayes_q,msl_bayes_c,msl_prior,msl_lq_analytic= res
+        msl_b, msl_l, msl_q, msl_c, alpha_l, alpha_q, alpha_c, prior_var,msl_bayes_l,msl_bayes_q,msl_bayes_c,msl_prior,msl_lq_analytic,msl_hom= res
         msl_bayes_list.append(msl_b)
         msl_prior_list.append(msl_prior)
         msl_linear_list.append(msl_l)
@@ -496,11 +517,11 @@ if __name__ == '__main__':
         alpha_opt_linear_quad_list.append(alpha_c)
         prior_variance_list.append(prior_var)
         # alpha_opt_prior_list.append(alpha_prior)
-        # msl_prior_list.append(msl_prior)
         msl_linear_bayes_list.append(msl_bayes_l)
         msl_quad_bayes_list.append(msl_bayes_q)
         msl_linear_quad_bayes_list.append(msl_bayes_c)
         msl_linear_quad_analytic_list.append(msl_lq_analytic)
+        msl_homodyne_list.append(msl_hom)
 
     # Convert to arrays
     prior_variance_list = np.array(prior_variance_list)
@@ -513,6 +534,7 @@ if __name__ == '__main__':
     msl_quad_bayes_arr = np.array(msl_quad_bayes_list)
     msl_linear_quad_bayes_arr = np.array(msl_linear_quad_bayes_list)
     msl_linear_quad_analytic_arr=np.array(msl_linear_quad_analytic_list)
+    msl_homodyne_arr = np.array(msl_homodyne_list)
 
     """
     4x4 set of plots. Each as a function of the prior width.
@@ -642,6 +664,7 @@ if __name__ == '__main__':
     ratio_quad_bayes = np.maximum((msl_quad_bayes_arr - msl_bayes_arr) / np.abs(msl_bayes_arr), eps) 
     ratio_linear_quad =np.maximum((msl_linear_quad_arr - msl_bayes_arr) / np.abs(msl_bayes_arr), eps) 
     ratio_linear_quad_bayes =np.maximum((msl_linear_quad_bayes_arr - msl_bayes_arr) / np.abs(msl_bayes_arr), eps)
+    ratio_homodyne = msl_homodyne_arr / msl_bayes_arr-1
 
     lw_main = 5 # Linewidth
 
@@ -654,6 +677,7 @@ if __name__ == '__main__':
     #ax2.loglog(prior_variance_list, ratio_linear_quad, '--', linewidth=lw_main, label='Linear & Quadratic', color="#2c70a0")
     #ax2.loglog(prior_variance_list, ratio_linear_quad_bayes, '-', linewidth=lw_main, label='Linear & Quadratic (PM)', color="#2c70a0")
     #ax2.loglog(prior_variance_list, ratio_linear_quad_bayes, '--', linewidth=lw_main, label='Linear & Quadratic (PM) Analytic', color="#9b1b93")
+    ax2.loglog(prior_variance_list, ratio_homodyne,linestyle='-.', linewidth=lw_main,color="#1670C4", label=f'Homodyne {phi_unicode}={phi_homodyne:.2f}')
     ax2.set_xlabel('$\\sigma^2$', fontsize=30)
     ax2.set_ylabel('$\\mathcal{L}_R$', fontsize=30) 
     ax2.legend(fontsize=20)
@@ -661,7 +685,7 @@ if __name__ == '__main__':
     ax2.tick_params(axis='both', which='major',length=10, width=2, labelsize=20)
     ax2.tick_params(axis='both', which='minor', length=6, width=1.5)
     ax2.grid(False)
-    #plt.text(0.0015, 0.85, '(b)', fontsize=30)
+    plt.text(0.0015, 0.85, '(b)', fontsize=30)
     #plt.text(0.004, 5, '(a)', fontsize=30)
     fig2.tight_layout()
     # fig2.savefig(f'{output_dir}/ratio_vs_variance_{ref_state_type}_{prior_type}.png', dpi=300, bbox_inches='tight')
