@@ -68,14 +68,14 @@ def design_parameters(N, ref_state_type, alpha=1.0, n_th=0.2, r=0.4, theta0=0.5,
     sigma_min = 10*dtheta  # prior must cover at least 10 grid spacings
 
     #theta_sigma_values = np.logspace(np.log10(sigma_min), np.log10(sigma_max), sigma_pts) # Create a prior grid with sigma_pts
-    theta_sigma_values = np.logspace(-1.2, np.log10(sigma_max), sigma_pts)
+    #theta_sigma_values = np.logspace(-1.2, np.log10(sigma_max), sigma_pts)
     
     return {
         'theta_min': theta_min,
         'theta_max': theta_max,
         'sigma_min': sigma_min,
         'sigma_max': sigma_max,
-        'theta_sigma_values': theta_sigma_values,
+        #'theta_sigma_values': theta_sigma_values,
         'n0': n0,
         'n_budget': n_budget,
     }
@@ -248,8 +248,8 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     Compute MSL for Bayes-optimal, linear and quadratic basis.
     
     Returns:
-    - msl_bayes, msl_linear, msl_quad, msl_linear_quad
-    - alpha_linear, alpha_quad, alpha_linear_quad (coefficients)
+    - msl_bayes, msl_linear, msl_quad, msl_cubic
+    - alpha_linear, alpha_quad, alpha_cubic (coefficients)
     - prior_variance
     """
     
@@ -310,18 +310,27 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     msl_linear = lambda_val - b_vec_linear @ la.pinv(G_mat_linear) @ b_vec_linear
     
     # ---------------- Quadratic basis ----------------
-    B_quad = [I, x @ x, 0.5 * (x @ p + p @ x), p @ p]
+    #B_quad = [I, x @ x, 0.5 * (x @ p + p @ x), p @ p]
+    B_quad = [I, x@x,p@p]
     B_quad = [0.5 * (M + M.conj().T) for M in B_quad]
     
     alpha_opt_quad, G_mat_quad, b_vec_quad = get_optimal_coefficients(rho0, rho1, B_quad)
     msl_quad = lambda_val - b_vec_quad @ la.pinv(G_mat_quad) @ b_vec_quad
     
-    # ---------------- Linear and quadratic basis ----------------
-    B_linear_quad = [I, x,p,x @ x, 0.5 * (x @ p + p @ x), p @ p]
-    B_linear_quad = [0.5 * (M + M.conj().T) for M in B_linear_quad]
-    
-    alpha_opt_linear_quad, G_mat_linear_quad, b_vec_linear_quad = get_optimal_coefficients(rho0, rho1, B_linear_quad)
-    msl_linear_quad = lambda_val - b_vec_linear_quad @ la.pinv(G_mat_linear_quad) @ b_vec_linear_quad
+    # ---------------- Cubic basis ----------------
+    # Centering operators
+    avgx  = HS(rho0, x)
+    Dx  = x - avgx*I
+
+    avgDx2 = HS(rho0, Dx@Dx)
+    avgDx4 = HS(rho0, Dx@Dx@Dx@Dx)
+    B_cubic = [I, Dx,Dx@Dx@Dx-(avgDx4/avgDx2)*Dx]
+    B_cubic = [0.5 * (M + M.conj().T) for M in B_cubic]
+
+    alpha_opt_cubic, G_mat_cubic, b_vec_cubic = get_optimal_coefficients(rho0, rho1, B_cubic)
+
+    msl_cubic = lambda_val - b_vec_cubic @ la.pinv(G_mat_cubic) @ b_vec_cubic
+
 
     # ---------------- Constrained PVM + Posterioir mean MSL ---------------
     # Linear 
@@ -335,65 +344,88 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     S_quad = 0.5 * (S_quad + S_quad.conj().T)
     msl_quad_bayes = msl_bayes_for_pvm(S_quad, rho0, rho1, lambda_val)
 
-    # Linear and quadratic 
-    S_linear_quad = sum(alpha_opt_linear_quad[i] * B_linear_quad[i] for i in range(len(B_linear_quad)))
-    S_linear_quad = 0.5 * (S_linear_quad + S_linear_quad.conj().T)
-    msl_linear_quad_bayes = msl_bayes_for_pvm(S_linear_quad, rho0, rho1, lambda_val)
+    # Cubic
+    S_cubic = sum(alpha_opt_cubic[i] * B_cubic[i] for i in range(len(B_cubic)))
+    S_cubic = 0.5 * (S_cubic + S_cubic.conj().T)
+    msl_cubic_bayes = msl_bayes_for_pvm(S_cubic, rho0, rho1, lambda_val)
 
     # ---------------- Linear & Quadratic analytic -----------------------
-    avgxrho0=HS(rho0, x)
-    avgprho0=HS(rho0, p)
-    Dx = x - avgxrho0 * I
-    Dp = p - avgprho0 * I
-    B_linear_quad_analytic = [I, Dx, Dp, Dx@Dx, 0.5*(Dx@Dp + Dp@Dx), Dp@Dp]
-    #B_linear_quad_analytic = [I, x-avgxrho0*I, p-avgprho0*I,(x-avgxrho0*I) @ (x-avgxrho0*I), 0.5 * ((x-avgxrho0*I) @ (p-avgprho0*I)+ (p-avgprho0*I) @ (x-avgxrho0*I)), (p-avgprho0*I) @ (p-avgprho0*I)]
+
+    # Centered basis
+    avgx  = HS(rho0, x)
+    avgp  = HS(rho0, p)
+    avgx2 = HS(rho0, x@x)   # <x^2>_rho0
+    avgp2 = HS(rho0, p@p)   # <p^2>_rho0
+
+    Dx  = x - avgx*I
+    Dp  = p - avgp*I
+    Dx2 = x@x - avgx2*I     # Centred as x^2 - <x^2>_rho0 * I
+    Dp2 = p@p - avgp2*I     
+    Dxp = 0.5*(x@p+p@x) - HS(rho0, 0.5*(x@p+p@x))*I
+    B_cubic_analytic = [I,Dx,Dp,Dx2,Dxp,Dp2]
+
+    # Different type of centering (but analytic formula below only for first type)
+    # avgxrho0=HS(rho0, x)
+    # avgprho0=HS(rho0, p)
+    # Dx = x - avgxrho0 * I
+    # Dp = p - avgprho0 * I
+    # B_cubic_analytic = [I, Dx, Dp, Dx@Dx, 0.5*(Dx@Dp + Dp@Dx), Dp@Dp]
+    #B_cubic_analytic = [I, x-avgxrho0*I, p-avgprho0*I,(x-avgxrho0*I) @ (x-avgxrho0*I), 0.5 * ((x-avgxrho0*I) @ (p-avgprho0*I)+ (p-avgprho0*I) @ (x-avgxrho0*I)), (p-avgprho0*I) @ (p-avgprho0*I)]
     
+
     if ref_state_type == 'vacuum':
-        x0t=0
-        p0t=0
-        Vxx=1
-        Vpp=1
+        x0t=x0
+        p0t=p0
+        Vxx=1/2
+        Vpp=1/2
     elif ref_state_type == 'coherent':
         x0t=np.real(alpha_coherent)
         p0t=np.imag(alpha_coherent)
-        Vxx=1
-        Vpp=1
+        Vxx=1/2
+        Vpp=1/2
     elif ref_state_type == 'thermal':
-        x0t=0
-        p0t=0
-        Vxx=1+2*n_thermal
-        Vpp=1+2*n_thermal
+        x0t=x0
+        p0t=p0
+        Vxx=0.5*(1+2*n_thermal)
+        Vpp=0.5*(1+2*n_thermal)
     elif ref_state_type == 'squeezed_vacuum':
-        x0t=0
-        p0t=0
+        x0t=x0
+        p0t=p0
         Vxx=np.exp(-2*r_squeeze)
         Vpp=np.exp(2*r_squeeze)
+    elif ref_state_type == 'squeezed_thermal':
+        x0t=x0
+        p0t=p0
+        Vxx=0.5*(1+2*n_thermal)*np.exp(-2*r_squeeze)
+        Vpp=0.5*(1+2*n_thermal)*np.exp(2*r_squeeze)
         
     # Shared denominator
-    denom = (-1/64) + 4*Vpp*(2*p0t**2 + Vpp)*(Vxx + prior_var)*(Vxx + 2*x0t**2 + 4*x0t*theta0 + 2*theta0**2 + prior_var)
+    denom = (-1/4) + 4*Vpp*(2*p0t**2 + Vpp)*(Vxx + prior_var)*(Vxx + 2*(x0t+theta0)**2 + prior_var)
 
-    alpha0_analytic   = theta0
-    alphax_analytic   = prior_var / (Vxx + prior_var)
-    alphap_analytic   = 0.0
-    alphaxx_analytic  = (4*Vpp*(2*p0t**2 + Vpp)*(x0t+theta0)*prior_var) / denom
-    alphaxp_analytic  = 0.0
-    alphapp_analytic  = -((x0t+theta0)*prior_var) / (4*denom)
-    #print(math.atan2(alpha_x_analytic,alpha_p_analytic))
+    alpha0_analytic = theta0
+    alphax_analytic = prior_var / (Vxx + prior_var)
+    alphap_analytic = 0.0
+    alphaxx_analytic = (4*Vpp*(2*p0t**2 + Vpp)*(x0t+theta0)*prior_var) / denom
+    alphaxp_analytic = 0.0
+    alphapp_analytic = ((x0t+theta0)*prior_var) / (4*denom)
+    alphapp_analytic=0
 
-    alpha_opt_linear_quad_analytic=[theta0,alphax_analytic,alphap_analytic,alphaxx_analytic,alphaxp_analytic,alphapp_analytic]
+    #print(f"xx: {alphaxx_analytic:.3e}, pp: {alphapp_analytic:.3e}")
 
-    S_linear_quad_analytic = sum(alpha_opt_linear_quad_analytic[i] * B_linear_quad_analytic[i] for i in range(len(B_linear_quad_analytic)))
-    S_linear_quad_analytic = 0.5 * (S_linear_quad_analytic + S_linear_quad_analytic.conj().T)
+    alpha_opt_cubic_analytic=[theta0,alphax_analytic,alphap_analytic,alphaxx_analytic,alphaxp_analytic,alphapp_analytic]
 
-    msl_linear_quad_analytic =  msl_bayes_for_pvm(S_linear_quad_analytic, rho0, rho1, lambda_val)
+    S_cubic_analytic = sum(alpha_opt_cubic_analytic[i] * B_cubic_analytic[i] for i in range(len(B_cubic_analytic)))
+    S_cubic_analytic = 0.5 * (S_cubic_analytic + S_cubic_analytic.conj().T)
+
+    msl_cubic_analytic =  msl_bayes_for_pvm(S_cubic_analytic, rho0, rho1, lambda_val)
 
     # Homodyne measurement at an angle phi + PM estimator
     msl_homodyne = msl_homodyne_func(phi_homodyne, rho0, rho1, lambda_val)
 
-    return (msl_bayes, msl_linear, msl_quad, msl_linear_quad, 
-            alpha_opt_linear, alpha_opt_quad, alpha_opt_linear_quad, 
-            prior_var,msl_linear_bayes,msl_quad_bayes,msl_linear_quad_bayes,
-            msl_prior,msl_linear_quad_analytic,msl_homodyne)
+    return (msl_bayes, msl_linear, msl_quad, msl_cubic, 
+            alpha_opt_linear, alpha_opt_quad, alpha_opt_cubic, 
+            prior_var,msl_linear_bayes,msl_quad_bayes,msl_cubic_bayes,
+            msl_prior,msl_cubic_analytic,msl_homodyne)
 
 
 def compute_sigma(theta_sigma): 
@@ -404,10 +436,10 @@ def compute_sigma(theta_sigma):
 
 # --------------------- User parameters ---------------------
 
-N = 30 # Fock truncation 
+N = 40 # Fock truncation 
 
 # Reference state parameters (before displacement)
-ref_state_type = 'squeezed_vacuum'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
+ref_state_type = 'coherent'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
 x0, p0 = 0.0, 0.0  # Initial mean position
 alpha_coherent = 0.5+0.4j  # Coherent state amplitude (if coherent)
 n_thermal = 0.2  # Thermal photons (if thermal)
@@ -427,7 +459,10 @@ params = design_parameters(N, ref_state_type,alpha_coherent,n_thermal,r_squeeze,
 theta_min=params['theta_min'] # Prior range
 theta_max=params['theta_max']
 sigma_max=params['sigma_max'] # Max standard deviation of a Gaussian prior which is 99.7% contained in the prior range
-theta_sigma_values=params['theta_sigma_values'] # Range of prior widths to test
+#theta_sigma_values=params['theta_sigma_values'] # Range of prior widths to test
+
+### Use fixed range for the plots
+theta_sigma_values = np.logspace(-0.8, 0.2, sigma_pts) 
 
 phi_homodyne=0 # Angle of homodyne measurement. 0 and pi/2 corresponds to x and p quadratures respectively
 
@@ -449,15 +484,15 @@ if __name__ == '__main__':
     msl_prior_list = []
     msl_linear_list = []
     msl_quad_list = []
-    msl_linear_quad_list = []
+    msl_cubic_list = []
     alpha_opt_linear_list = []
     alpha_opt_quad_list = []
-    alpha_opt_linear_quad_list = []
+    alpha_opt_cubic_list = []
     prior_variance_list = []
     msl_linear_bayes_list = []
     msl_quad_bayes_list = []
-    msl_linear_quad_bayes_list = []
-    msl_linear_quad_analytic_list = []
+    msl_cubic_bayes_list = []
+    msl_cubic_analytic_list = []
     msl_homodyne_list = []
 
     print("="*70)
@@ -484,14 +519,14 @@ if __name__ == '__main__':
     #     msl_bayes_list.append(msl_b)
     #     msl_linear_list.append(msl_l)
     #     msl_quad_list.append(msl_q)
-    #     msl_linear_quad_list.append(msl_c)
+    #     msl_cubic_list.append(msl_c)
     #     alpha_opt_linear_list.append(alpha_l)
     #     alpha_opt_quad_list.append(alpha_q)
-    #     alpha_opt_linear_quad_list.append(alpha_c)
+    #     alpha_opt_cubic_list.append(alpha_c)
     #     prior_variance_list.append(prior_var)
     #     msl_linear_bayes_list.append(msl_bayes_l)
     #     msl_quad_bayes_list.append(msl_bayes_q)
-    #     msl_linear_quad_bayes_list.append(msl_bayes_c)
+    #     msl_cubic_bayes_list.append(msl_bayes_c)
 
     #     print(f" -> Bayes={msl_b:.4e}, Linear={msl_l:.4e}, Quad={msl_q:.4e}, Linear & Quad={msl_c:.4e}")
 
@@ -511,16 +546,16 @@ if __name__ == '__main__':
         msl_prior_list.append(msl_prior)
         msl_linear_list.append(msl_l)
         msl_quad_list.append(msl_q)
-        msl_linear_quad_list.append(msl_c)
+        msl_cubic_list.append(msl_c)
         alpha_opt_linear_list.append(alpha_l)
         alpha_opt_quad_list.append(alpha_q)
-        alpha_opt_linear_quad_list.append(alpha_c)
+        alpha_opt_cubic_list.append(alpha_c)
         prior_variance_list.append(prior_var)
         # alpha_opt_prior_list.append(alpha_prior)
         msl_linear_bayes_list.append(msl_bayes_l)
         msl_quad_bayes_list.append(msl_bayes_q)
-        msl_linear_quad_bayes_list.append(msl_bayes_c)
-        msl_linear_quad_analytic_list.append(msl_lq_analytic)
+        msl_cubic_bayes_list.append(msl_bayes_c)
+        msl_cubic_analytic_list.append(msl_lq_analytic)
         msl_homodyne_list.append(msl_hom)
 
     # Convert to arrays
@@ -529,11 +564,11 @@ if __name__ == '__main__':
     msl_bayes_arr = np.array(msl_bayes_list)
     msl_linear_arr = np.array(msl_linear_list)
     msl_quad_arr = np.array(msl_quad_list)
-    msl_linear_quad_arr = np.array(msl_linear_quad_list)
+    msl_cubic_arr = np.array(msl_cubic_list)
     msl_linear_bayes_arr = np.array(msl_linear_bayes_list)
     msl_quad_bayes_arr = np.array(msl_quad_bayes_list)
-    msl_linear_quad_bayes_arr = np.array(msl_linear_quad_bayes_list)
-    msl_linear_quad_analytic_arr=np.array(msl_linear_quad_analytic_list)
+    msl_cubic_bayes_arr = np.array(msl_cubic_bayes_list)
+    msl_cubic_analytic_arr=np.array(msl_cubic_analytic_list)
     msl_homodyne_arr = np.array(msl_homodyne_list)
 
     """
@@ -553,7 +588,7 @@ if __name__ == '__main__':
             markersize=7, label='Linear SPM', color='C3')
     ax1.loglog(prior_variance_list, msl_quad_arr, 's--', linewidth=2, 
             markersize=7, label='Quadratic SPM', color='C1')
-    ax1.loglog(prior_variance_list, msl_linear_quad_arr, '^:', linewidth=2, 
+    ax1.loglog(prior_variance_list, msl_cubic_arr, '^:', linewidth=2, 
             markersize=7, label='Linear & Quad SPM', color='C2')
 
     # ax1.loglog(prior_variance_list, msl_linear_bayes_arr, '^:', linewidth=2, 
@@ -570,7 +605,7 @@ if __name__ == '__main__':
     ax2 = fig.add_subplot(gs[0, 1])
     ratio_linear = msl_linear_arr / msl_bayes_arr
     ratio_quad = msl_quad_arr / msl_bayes_arr
-    ratio_linear_quad = msl_linear_quad_arr / msl_bayes_arr
+    ratio_cubic = msl_cubic_arr / msl_bayes_arr
     ratio_linear_bayes = msl_linear_bayes_arr / msl_bayes_arr
     ratio_quad_bayes = msl_quad_bayes_arr / msl_bayes_arr
 
@@ -579,7 +614,7 @@ if __name__ == '__main__':
                 markersize=7, label='Linear / Bayes', color='C3')
     ax2.semilogx(prior_variance_list, ratio_quad, 's--', linewidth=2, 
                 markersize=7, label='Quadratic / Bayes', color='C1')
-    ax2.semilogx(prior_variance_list, ratio_linear_quad, '^:', linewidth=2, 
+    ax2.semilogx(prior_variance_list, ratio_cubic, '^:', linewidth=2, 
                 markersize=7, label='Linear & Quadratic / Bayes', color='C2')
 
     # ax2.semilogx(prior_variance_list, ratio_linear_bayes, '^:', linewidth=2, 
@@ -640,7 +675,7 @@ if __name__ == '__main__':
     # ax1.loglog(prior_variance_list, msl_bayes_arr, 'o-', linewidth=3.5, markersize=10, label='Bayes-optimal', color='C0')
     # ax1.loglog(prior_variance_list, msl_linear_arr, 'd--', linewidth=3, markersize=9, label='Linear SPM', color='C3')
     # ax1.loglog(prior_variance_list, msl_quad_arr, 's--', linewidth=3, markersize=9, label='Quadratic SPM', color='C1')
-    # ax1.loglog(prior_variance_list, msl_linear_quad_arr, '^:', linewidth=3, markersize=9, label='Linear & Quadratic SPM', color='C2')
+    # ax1.loglog(prior_variance_list, msl_cubic_arr, '^:', linewidth=3, markersize=9, label='Linear & Quadratic SPM', color='C2')
     # ax1.set_xlabel('Prior variance $\\sigma^2$', fontsize=20)
     # ax1.set_ylabel('Minimum MSL (MSE)', fontsize=20)
     # ax1.legend(fontsize=20)
@@ -653,7 +688,7 @@ if __name__ == '__main__':
     # print(f"Saved: {output_dir}/msl_vs_variance_{ref_state_type}.png")
 
 
-    # Plot 2: Ratio to Bayes-optimal
+    # Plot 2: Ratio to Bayes-optimal given by L_R(M_1)=(L(M_1)-L(S))/L(S) for the operator moment  M_1 containing the estimator and measurement
     fig2, ax2 = plt.subplots(figsize=(8, 6))
     ratio_prior = msl_prior_arr / msl_bayes_arr -1
     
@@ -662,31 +697,49 @@ if __name__ == '__main__':
     ratio_linear_bayes = np.maximum((msl_linear_bayes_arr- msl_bayes_arr) / np.abs(msl_bayes_arr), eps)
     ratio_quad = np.maximum((msl_quad_arr - msl_bayes_arr) / np.abs(msl_bayes_arr), eps) 
     ratio_quad_bayes = np.maximum((msl_quad_bayes_arr - msl_bayes_arr) / np.abs(msl_bayes_arr), eps) 
-    ratio_linear_quad =np.maximum((msl_linear_quad_arr - msl_bayes_arr) / np.abs(msl_bayes_arr), eps) 
-    ratio_linear_quad_bayes =np.maximum((msl_linear_quad_bayes_arr - msl_bayes_arr) / np.abs(msl_bayes_arr), eps)
+    ratio_cubic =np.maximum((msl_cubic_arr - msl_bayes_arr) / np.abs(msl_bayes_arr), eps) 
+    ratio_cubic_bayes =np.maximum((msl_cubic_bayes_arr - msl_bayes_arr) / np.abs(msl_bayes_arr), eps)
+    ratio_cubic_bayes_analytic =np.maximum((msl_cubic_analytic_arr - msl_bayes_arr) / np.abs(msl_bayes_arr), eps)
     ratio_homodyne = msl_homodyne_arr / msl_bayes_arr-1
 
     lw_main = 5 # Linewidth
-
     #ax2.axhline(y=1, color='C0', linestyle='-', linewidth=3, alpha=0.6, label='Bayes (ratio=1)')
-    ax2.loglog(prior_variance_list, ratio_prior,linestyle=':', linewidth=lw_main,color="#959ba0", label='Prior')
-    ax2.loglog(prior_variance_list, ratio_linear, '--', linewidth=lw_main, label='Linear ', color='#d62728')
-    ax2.loglog(prior_variance_list, ratio_linear_bayes, '-', linewidth=lw_main, label='Linear (PM)', color='#d62728')
-    ax2.loglog(prior_variance_list, ratio_quad, '--', linewidth=lw_main, label='Quadratic', color='#2ca02c')
-    ax2.loglog(prior_variance_list, ratio_quad_bayes, '-', linewidth=lw_main, label='Quadratic (PM)', color='#2ca02c')
-    #ax2.loglog(prior_variance_list, ratio_linear_quad, '--', linewidth=lw_main, label='Linear & Quadratic', color="#2c70a0")
-    #ax2.loglog(prior_variance_list, ratio_linear_quad_bayes, '-', linewidth=lw_main, label='Linear & Quadratic (PM)', color="#2c70a0")
-    #ax2.loglog(prior_variance_list, ratio_linear_quad_bayes, '--', linewidth=lw_main, label='Linear & Quadratic (PM) Analytic', color="#9b1b93")
+    ax2.loglog(prior_variance_list, ratio_prior,linestyle='-.', linewidth=lw_main,color="#959ba0", label='Prior')
+    ax2.loglog(prior_variance_list, ratio_linear, ':', linewidth=lw_main, label='Linear ', color="#000000")
+    ax2.loglog(prior_variance_list, ratio_linear_bayes, '-', linewidth=lw_main, label='Linear (PM)', color="#000000")
+    #ax2.loglog(prior_variance_list, ratio_quad, '--', linewidth=lw_main, label='Quadratic', color='#2ca02c')
+    ax2.loglog(prior_variance_list, ratio_cubic, '--', linewidth=lw_main, label='Cubic', color="#000000")
+    #ax2.loglog(prior_variance_list, ratio_cubic_bayes_analytic, '--', linewidth=lw_main, label='Linear & Quadratic (PM) Analytic', color="#9b1b93")
     ax2.loglog(prior_variance_list, ratio_homodyne,linestyle='-.', linewidth=lw_main,color="#1670C4", label=f'Homodyne {phi_unicode}={phi_homodyne:.2f}')
-    ax2.set_xlabel('$\\sigma^2$', fontsize=30)
+    ax2.set_xlabel('$\\sigma^2_0$', fontsize=25)
     ax2.set_ylabel('$\\mathcal{L}_R$', fontsize=30) 
     ax2.legend(fontsize=20)
     ax2.get_legend().remove()
     ax2.tick_params(axis='both', which='major',length=10, width=2, labelsize=20)
     ax2.tick_params(axis='both', which='minor', length=6, width=1.5)
     ax2.grid(False)
-    plt.text(0.0015, 0.85, '(b)', fontsize=30)
+    #plt.text(0.0015, 0.85, '(b)', fontsize=30)
     #plt.text(0.004, 5, '(a)', fontsize=30)
+    ax2.grid(False)
+
+    # ---- Inset: zoomed view from sigma^2 = (0.2,0.12) to end ----
+    axins = ax2.inset_axes([0.55, 0.08, 0.38, 0.30])   # [left, bottom, width, height] in axes coords
+
+    zoom_mask = prior_variance_list >= 0.2
+
+    axins.loglog(prior_variance_list[zoom_mask], ratio_linear[zoom_mask],':', linewidth=lw_main - 2, color="#000000")
+    axins.loglog(prior_variance_list[zoom_mask], ratio_linear_bayes[zoom_mask],'-', linewidth=lw_main - 2, color="#000000")
+    axins.loglog(prior_variance_list[zoom_mask], ratio_cubic[zoom_mask],'--', linewidth=lw_main - 2, color="#000000")
+
+    axins.set_xlim(prior_variance_list[zoom_mask][0], prior_variance_list[zoom_mask][-1])
+    axins.set_ylim(top=0.12)
+
+    # axins.tick_params(axis='both', which='major', length=5, width=1.5, labelsize=13)
+    # axins.tick_params(axis='both', which='minor', length=3, width=1)
+    axins.tick_params(which='both',left=False,labelleft=False,bottom=False,labelbottom=False)
+    axins.grid(False)
+
+    ax2.indicate_inset_zoom(axins, edgecolor="gray", alpha=0.75)
     fig2.tight_layout()
     # fig2.savefig(f'{output_dir}/ratio_vs_variance_{ref_state_type}_{prior_type}.png', dpi=300, bbox_inches='tight')
     # fig2.savefig(f'{output_dir}/ratio_vs_variance_{ref_state_type}_{prior_type}.pdf', bbox_inches='tight')
@@ -707,9 +760,9 @@ if __name__ == '__main__':
     print(f"  Bayes-optimal: {msl_bayes_list[-1]:.6e}")
     print(f"  Linear:        {msl_linear_list[-1]:.6e} (ratio: {ratio_linear[-1]:.4f})")
     print(f"  Quadratic:     {msl_quad_list[-1]:.6e} (ratio: {ratio_quad[-1]:.4f})")
-    print(f"  Linear & Quadratic:         {msl_linear_quad_list[-1]:.6e} (ratio: {ratio_linear_quad[-1]:.4f})")
+    print(f"  Cubic:         {msl_cubic_list[-1]:.6e} (ratio: {ratio_cubic[-1]:.4f})")
 
-    print(f"\nFinal optimal coefficients $\\alpha$:")
-    basis_labels_quad = ['I', 'x', 'p', 'x²', '(xp+px)/2', 'p²']
-    for i, label in enumerate(basis_labels_quad):
-        print(f"  {alpha_unicode}[{label}] = {alpha_opt_linear_quad_list[-1][i]:+.6f}")
+    # print(f"\nFinal optimal coefficients $\\alpha$:")
+    # basis_labels_quad = ['I', 'x', 'p', 'x²', '(xp+px)/2', 'p²']
+    # for i, label in enumerate(basis_labels_quad):
+    #     print(f"  {alpha_unicode}[{label}] = {alpha_opt_cubic_list[-1][i]:+.6f}")

@@ -1,6 +1,6 @@
 """
 Here we compare the minimum MSL vs prior width for the Bayes-optimal (solution to the Lyapunov equation)
-and constrained ansatzes (linear, quadratic, cubic) for estimating squeezing of a single-mode probe state.
+and constrained basis (linear, quadratic, cubic) for estimating squeezing of a single-mode probe state.
 
 For no squeezing angle, the encoded state is:
 rho(theta) = S(theta) rho S^dagger(theta)
@@ -33,22 +33,6 @@ def design_parameters(N, ref_state_type, alpha=1.0, n_th=0.2, r=0.4, theta0=0.5,
     A squeezed reference state has <n>(theta) which a function depending on the reference state.
     For a given Fock truncation, the maximum average photon number we can resolve is <n>_max~N/safety factor.
     One can then invert for the largest grid size theta_max allowed.
-
-    
-    Inputs:
-    -----------
-    int N : Fock truncation
-    str ref_state_type : 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', 'squeezed_thermal'
-    complex or float alpha : Coherent state amplitude
-    float n_th : Thermal photon number
-    float : Initial squeezing parameter
-    float theta0 : Prior center
-    float sigma_pts : Number of prior standard deviation grid points
-    float safety_factor : Safety margin (3-5 recommended)
-    
-    Returns:
-    --------
-    dict with theta_min, theta_max, sigma_max, theta_sigma_values
     """
     
     # Initial photon number depending on probe state
@@ -206,7 +190,7 @@ def HS(Aop, Bop):
         return np.real(np.trace(Aop.conj().T @ Bop))
 
 def get_optimal_coefficients(rho0, rho1, B):
-    # Compute optimal coefficients alpha^opt for constrained ansatz
+    # Compute optimal coefficients alpha^opt for constrained basis
     
     m = len(B)
     G = np.zeros((m, m), dtype=float)
@@ -309,12 +293,12 @@ def weighted_norm_sq(A, rho0):
     return np.real(np.trace(A @ rho0 @ A))
 
 
-def relative_msl_via_norm(S_op_ansatz, S_bayes, rho0, rho1, lambda_val):
+def relative_msl_via_norm(S_op_basis, S_bayes, rho0, rho1, lambda_val):
     """
     Compute L_R = ||S - M1||^2_{rho0} / L(S)
-    where M1 is the PVM+PM operator built from S_op_ansatz.
+    where M1 is the PVM+PM operator built from S_op_basis.
     """
-    M1 = build_M1_pvm(S_op_ansatz, rho0, rho1, lambda_val)
+    M1 = build_M1_pvm(S_op_basis, rho0, rho1, lambda_val)
     diff = S_bayes - M1
     norm_sq = weighted_norm_sq(diff, rho0)
     msl_bayes = lambda_val - np.real(np.trace(rho0 @ S_bayes @ S_bayes))
@@ -369,7 +353,7 @@ def check_S2_containment(rho_ref, theta0, basis):
 
 def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     """
-    Compute MSL for Bayes-optimal, linear, quadratic, and cubic ansatzes.
+    Compute MSL for Bayes-optimal, linear, quadratic, and cubic basises.
     
     Returns:
     - msl_bayes, msl_linear, msl_quad, msl_cubic
@@ -427,7 +411,7 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     
     msl_bayes = lambda_val - np.real(np.trace(rho0 @ (S_bayes @ S_bayes)))
     
-    # ---------------- Linear ansatz: {I, x, p} -----------------------
+    # ---------------- Linear basis: {I, x, p} -----------------------
     B_linear = [I, x, p]
     B_linear = [0.5 * (M + M.conj().T) for M in B_linear]
     
@@ -435,14 +419,14 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
     msl_linear = lambda_val - b_vec_linear @ la.pinv(G_mat_linear) @ b_vec_linear
 
     
-    # ---------------- Quadratic ansatz -----------------------
+    # ---------------- Quadratic basis -----------------------
     B_quad = [I, x, p, x @ x, 0.5 * (x @ p + p @ x), p @ p]
     B_quad = [0.5 * (M + M.conj().T) for M in B_quad]
     
     alpha_opt_quad, G_mat_quad, b_vec_quad = get_optimal_coefficients(rho0, rho1, B_quad)
     msl_quad = lambda_val - b_vec_quad @ la.pinv(G_mat_quad) @ b_vec_quad
     
-    # ---------------- Cubic ansatz -----------------------
+    # ---------------- Cubic basis -----------------------
     B_cubic = B_quad.copy()
     B_cubic.append(x @ x @ x)
     B_cubic.append(x @ x @ p)
@@ -464,18 +448,18 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
 
 
     # ---------------- Constrained PVM + Posterioir mean MSL ---------------
-    # Linear ansatz 
+    # Linear basis 
     S_linear = sum(alpha_opt_linear[i] * B_linear[i] for i in range(len(B_linear)))
     S_linear = 0.5 * (S_linear + S_linear.conj().T)
 
     msl_linear_bayes = msl_bayes_for_pvm(S_linear, rho0, rho1, lambda_val)
 
-    # Quadratic ansatz 
+    # Quadratic basis 
     S_quad = sum(alpha_opt_quad[i] * B_quad[i] for i in range(len(B_quad)))
     S_quad = 0.5 * (S_quad + S_quad.conj().T)
     msl_quad_bayes = msl_bayes_for_pvm(S_quad, rho0, rho1, lambda_val)
 
-    # Cubic ansatz 
+    # Cubic basis 
     S_cubic = sum(alpha_opt_cubic[i] * B_cubic[i] for i in range(len(B_cubic)))
     S_cubic = 0.5 * (S_cubic + S_cubic.conj().T)
     msl_cubic_bayes = msl_bayes_for_pvm(S_cubic, rho0, rho1, lambda_val)
@@ -545,13 +529,13 @@ def compute_msl_for_prior_width(theta_sigma, theta0=0.0, prior_type='gaussian'):
 
     # ----------- Relative MSL via weighted norm ||S - M1||^2_{rho0} / L(S) -----------
 
-    # Linear ansatz PVM + PM
+    # Linear basis PVM + PM
     Lr_linear, M1_linear = relative_msl_via_norm(S_linear, S_bayes, rho0, rho1, lambda_val)
 
-    # Quadratic ansatz PVM + PM
+    # Quadratic basis PVM + PM
     Lr_quad, M1_quad = relative_msl_via_norm(S_quad, S_bayes, rho0, rho1, lambda_val)
 
-    # Cubic ansatz PVM + PM
+    # Cubic basis PVM + PM
     #Lr_cubic, M1_cubic = relative_msl_via_norm(S_cubic, S_bayes, rho0, rho1, lambda_val)
 
     # Homodyne + PM
