@@ -14,7 +14,7 @@ research/
 
 # Figures 
 # Ignore figs at repo root for now
-/figs/
+/figs_old/
 # Do not ignore figs inside examples
 #!/examples/**/figs/ 
 
