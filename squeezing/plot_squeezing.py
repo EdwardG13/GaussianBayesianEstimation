@@ -10,7 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Reference state parameters
-ref_state_type = 'coherent'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
+ref_state_type = 'thermal'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
 #ref_state_type = sys.argv[1] if len(sys.argv) > 1 else 'coherent'
 stem     = f'squeezing_{ref_state_type}'
 
@@ -53,7 +53,7 @@ lw   = 8
 fs   = 40
 fs_t = 30
 
-C_blue  = "#040e9b"
+C_blue  = "#070f8b"
 C_green = "#2ca02c"
 C_black = "#000000"
 C_grey  = "#959ba0"
@@ -63,14 +63,14 @@ C_grey  = "#959ba0"
 fig, ax = plt.subplots(figsize=(14, 9))
 
 ax.loglog(prior_var, r_prior, linestyle=':',  lw=lw,   color=C_grey,  label='Prior')
-ax.loglog(prior_var, r_linear,  linestyle='--', lw=lw,   color=C_blue,  label='Linear')
-ax.loglog(prior_var, r_linear_bayes, linestyle='-',  lw=lw,   color=C_blue,  label='Linear (PM)')
+#ax.loglog(prior_var, r_linear,  linestyle='--', lw=lw,   color=C_blue,  label='Linear') # Remove the linear homodyne MSL for zero-mean probes (like vacuum and thermal) since these offer no improvement over the prior.
+#ax.loglog(prior_var, r_linear_bayes, linestyle='-',  lw=lw,   color=C_blue,  label='Linear (PM)')
 ax.loglog(prior_var, r_quad_hom, linestyle='--', lw=lw,   color=C_green, label='Quadratic homodyne')
-ax.loglog(prior_var, r_quad_hom_bayes, linestyle='-',  lw=lw,   color=C_green, label='Quadratic homodyne (PM)')
-ax.loglog(prior_var, r_quad,  linestyle='--', lw=lw,   color=C_black, label='Quadratic')
-ax.loglog(prior_var, r_quad_bayes, linestyle='-',  lw=lw,   color=C_black, label='Quadratic (PM)')
+#ax.loglog(prior_var, r_quad_hom_bayes, linestyle='-',  lw=lw,   color=C_green, label='Quadratic homodyne (PM)')
+ax.loglog(prior_var, r_quad,  linestyle='--', lw=lw,   color=C_blue, label='Quadratic')
+ax.loglog(prior_var, r_quad_bayes, linestyle='-',  lw=lw,   color=C_blue, label='Quadratic (PM)')
 
-#ax.loglog(prior_var, r_homodyne, linestyle='-',  lw=lw,   color=C_green, label='Homodyne (PM)') # Use this for Quadratic homodyne (PM) for a thermal probe (the numerical one is unstable).  
+ax.loglog(prior_var, r_homodyne, linestyle='-',  lw=lw,   color=C_green, label='Homodyne (PM)') # Use this for Quadratic homodyne (PM) for a thermal probe (the numerical one is unstable).
 
 ax.set_xlabel(r'$\sigma^2_0$',   fontsize=fs)
 ax.set_ylabel(r'$\mathcal{L}_R$', fontsize=fs)
@@ -79,6 +79,7 @@ ax.tick_params(axis='both', which='minor', length=12, width=2)
 ax.grid(False)
 
 ### The insets locations and sizes have been chosen for the vacuum and thermal probe states. For others, it might not be aligned. 
+
 # Inset: zoomed view for large sigma_0^2
 """
 zoom_mask = prior_var >= 0.1
@@ -107,10 +108,10 @@ ax.indicate_inset_zoom(axins, edgecolor='gray', alpha=0.75)
 axins = ax.inset_axes([0.55, 0.15, 0.42, 0.35])
 lw_inset = lw - 2
 
-axins.plot(prior_var, msl_bayes, '-',  lw=lw_inset, color="#ff0000")
+axins.plot(prior_var, msl_bayes, '-',  lw=lw_inset, color=C_black)
 axins.plot(prior_var, msl_quad_hom, '--', lw=lw_inset, color=C_green)
-axins.plot(prior_var, msl_quad,  '--', lw=lw_inset, color=C_black)
-axins.plot(prior_var, msl_quad_bayes, '-',  lw=lw_inset, color=C_black)
+axins.plot(prior_var, msl_quad,  '--', lw=lw_inset, color=C_blue)
+axins.plot(prior_var, msl_quad_bayes, '-',  lw=lw_inset, color=C_blue)
 axins.plot(prior_var, msl_homodyne, '-',  lw=lw_inset, color=C_green)
 axins.plot(prior_var, msl_prior, ':',  lw=lw_inset, color=C_grey)
 
@@ -122,8 +123,21 @@ axins.tick_params(axis='both', which='major', length=14, width=3.5, labelsize=fs
 axins.grid(False)
 
 fig.tight_layout()
-# fig.savefig(out_dir / f'squeezing_LR_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
-# fig.savefig(out_dir / f'squeezing_LR_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
-# print(f"Saved: figs/squeezing_LR_vs_variance_{ref_state_type}.png")
+fig.savefig(out_dir / f'squeezing_LR_vs_variance_{ref_state_type}.png', dpi=300, bbox_inches='tight')
+fig.savefig(out_dir / f'squeezing_LR_vs_variance_{ref_state_type}.pdf', bbox_inches='tight')
+print(f"Saved: figs/squeezing_LR_vs_variance_{ref_state_type}.png")
 
+# Fit log-log slopes in the small sigma region
+print("\n" + "="*70)
+print("Prior width scaling")
+print("="*70)
+fit_mask = prior_var < 0.02  # small prior width region
+
+for label, ratio in [('Quad homodyne [I,x_phi]', r_quad_hom), 
+                    ('Quad homodyne [I,x_phi] (PM)', r_quad_hom_bayes), 
+                    ('Quadratic [I,x²,p²]', r_quad),
+                     ('Quadratic [I,x²,p²] (PM)', r_quad_bayes)]:
+    coeffs = np.polyfit(np.log(prior_var[fit_mask]), 
+                        np.log(ratio[fit_mask]), 1)
+    print(f"{label}: slope = {coeffs[0]:.3f}")
 plt.show()
