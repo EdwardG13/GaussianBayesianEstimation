@@ -10,7 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Reference state parameters
-ref_state_type = 'thermal'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
+ref_state_type = 'vacuum'  # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
 #ref_state_type = sys.argv[1] if len(sys.argv) > 1 else 'coherent'
 stem     = f'squeezing_{ref_state_type}'
 
@@ -65,12 +65,12 @@ fig, ax = plt.subplots(figsize=(14, 9))
 ax.loglog(prior_var, r_prior, linestyle=':',  lw=lw,   color=C_grey,  label='Prior')
 #ax.loglog(prior_var, r_linear,  linestyle='--', lw=lw,   color=C_blue,  label='Linear') # Remove the linear homodyne MSL for zero-mean probes (like vacuum and thermal) since these offer no improvement over the prior.
 #ax.loglog(prior_var, r_linear_bayes, linestyle='-',  lw=lw,   color=C_blue,  label='Linear (PM)')
-ax.loglog(prior_var, r_quad_hom, linestyle='--', lw=lw,   color=C_green, label='Quadratic homodyne')
-#ax.loglog(prior_var, r_quad_hom_bayes, linestyle='-',  lw=lw,   color=C_green, label='Quadratic homodyne (PM)')
-ax.loglog(prior_var, r_quad,  linestyle='--', lw=lw,   color=C_blue, label='Quadratic')
-ax.loglog(prior_var, r_quad_bayes, linestyle='-',  lw=lw,   color=C_blue, label='Quadratic (PM)')
+ax.loglog(prior_var, r_quad_hom, linestyle='--', lw=lw,   color=C_blue, label='Quadratic homodyne')
+#ax.loglog(prior_var, r_quad_hom_bayes, linestyle='-',  lw=lw,   color=C_blue, label='Quadratic homodyne (PM)')
+ax.loglog(prior_var, r_quad,  linestyle='--', lw=lw,   color=C_green, label='Quadratic')
+ax.loglog(prior_var, r_quad_bayes, linestyle='-',  lw=lw,   color=C_green, label='Quadratic (PM)')
 
-ax.loglog(prior_var, r_homodyne, linestyle='-',  lw=lw,   color=C_green, label='Homodyne (PM)') # Use this for Quadratic homodyne (PM) for a thermal probe (the numerical one is unstable).
+ax.loglog(prior_var, r_homodyne, linestyle='-',  lw=lw,   color=C_blue, label='Homodyne (PM)') # Use this for Quadratic homodyne (PM) for a thermal probe (the numerical one is unstable).
 
 ax.set_xlabel(r'$\sigma^2_0$',   fontsize=fs)
 ax.set_ylabel(r'$\mathcal{L}_R$', fontsize=fs)
@@ -109,10 +109,10 @@ axins = ax.inset_axes([0.55, 0.15, 0.42, 0.35])
 lw_inset = lw - 2
 
 axins.plot(prior_var, msl_bayes, '-',  lw=lw_inset, color=C_black)
-axins.plot(prior_var, msl_quad_hom, '--', lw=lw_inset, color=C_green)
-axins.plot(prior_var, msl_quad,  '--', lw=lw_inset, color=C_blue)
-axins.plot(prior_var, msl_quad_bayes, '-',  lw=lw_inset, color=C_blue)
-axins.plot(prior_var, msl_homodyne, '-',  lw=lw_inset, color=C_green)
+axins.plot(prior_var, msl_quad_hom, '--', lw=lw_inset, color=C_blue)
+axins.plot(prior_var, msl_quad,  '--', lw=lw_inset, color=C_green)
+axins.plot(prior_var, msl_quad_bayes, '-',  lw=lw_inset, color=C_green)
+axins.plot(prior_var, msl_homodyne, '-',  lw=lw_inset, color=C_blue)
 axins.plot(prior_var, msl_prior, ':',  lw=lw_inset, color=C_grey)
 
 axins.set_xlim(prior_var[0], prior_var[-1])
