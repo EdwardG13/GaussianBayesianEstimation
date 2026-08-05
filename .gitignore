@@ -15,6 +15,7 @@ research/
 # Figures 
 # Ignore figs at repo root for now
 /figs_old/
+/squeezing/old_files/
 # Do not ignore figs inside examples
 #!/examples/**/figs/ 
 
