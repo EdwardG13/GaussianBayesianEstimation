@@ -1,0 +1,22 @@
+{
+  "task": "displacement",
+  "ref_state_type": "vacuum",
+  "alpha_coherent_re": 0.5,
+  "alpha_coherent_im": 0.5,
+  "n_thermal": 0.2,
+  "r_squeeze": 0.4,
+  "phi_squeeze": 0.0,
+  "x0": 0.0,
+  "p0": 0.0,
+  "theta0": 0.0,
+  "prior_type": "gaussian",
+  "phi_homodyne": 0.0,
+  "N": 30,
+  "theta_pts": 2000,
+  "sigma_pts": 25,
+  "grid_sigmas": 6.0,
+  "safety_factor": 5,
+  "theta_max_supported": 3.4641016151377544,
+  "theta_scale_min": 0.1,
+  "theta_scale_max": 0.31622776601683794
+}

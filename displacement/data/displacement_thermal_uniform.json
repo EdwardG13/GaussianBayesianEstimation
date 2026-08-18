@@ -1,0 +1,23 @@
+{
+  "task": "displacement",
+  "ref_state_type": "thermal",
+  "alpha_coherent_re": 0.5,
+  "alpha_coherent_im": 0.5,
+  "n_thermal": 0.2,
+  "r_squeeze": 0.4,
+  "phi_squeeze": 0.0,
+  "x0": 0.0,
+  "p0": 0.0,
+  "theta0": 0.0,
+  "prior_type": "uniform",
+  "phi_homodyne": 0.0,
+  "N": 40,
+  "theta_pts": 2000,
+  "grid_sigmas": 5.0,
+  "safety_factor": 5,
+  "theta_max_supported": 3.9496835316262997,
+  "prior_var_max_supported": 5.200000000000001,
+  "prior_var_min_used": 0.0031622776601683794,
+  "prior_var_max_used": 1.0,
+  "sigma_pts": 25
+}
