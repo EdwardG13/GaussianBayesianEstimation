@@ -67,7 +67,7 @@ def photon_number_at(theta, moments):
 
 def theta_range_supported(N, moments, safety_factor):
     """
-    Interval of theta the Fock truncation supports, i.e. where <n>(theta) <= N/safety_factor.
+    Interval of theta (squeezing) the Fock truncation can support, i.e. where <n>(theta) <= N/safety_factor.
 
     Unlike the displacement case, <n> grows exponentially in theta and is asymmetric whenever
     Vqq + qbar^2 != Vpp + pbar^2, so the two endpoints are found numerically.
@@ -92,7 +92,13 @@ def theta_scale_from_variance(prior_var, prior_type):
     raise ValueError(f"Unknown prior type: {prior_type}")
 
 def grid_half_width(theta_scale, prior_type, grid_sigmas):
-    # How far from theta0 the grid must reach for this prior to be faithfully represented
+    """
+    How far from theta0 the grid must reach for this prior to be faithfully represented.
+    
+    Composed with theta_scale_from_variance, half(sigma_0^2) = c * sqrt(sigma_0^2), where c=grid_sigmas for Gaussians (i.e. 3-5 prior widths in grid) or sqrt(3) for uniform.
+    
+    The idea is that theta_max-theta_0 >= c * sqrt(sigma_0^2_max) for some constant c which depends on the prior type. This allows us to invert for sigma_0.
+    """
     return theta_scale if prior_type == 'uniform' else grid_sigmas * theta_scale
 
 def squeeze_op(theta):
@@ -276,6 +282,8 @@ def compute_msl_for_prior_width(prior_var_target):
         subspaces of Section IV B,
       - the corresponding posterior mean strategies,
       - diagnostics (achieved prior variance, excluded prior tail, truncation leakage).
+
+    Note the prior grid is created fresh for every target prior variance, since it is unfeasable for the same grid to serve large and small prior variances.
     """
     theta_scale = theta_scale_from_variance(prior_var_target, prior_type)
     half = grid_half_width(theta_scale, prior_type, grid_sigmas)
@@ -385,7 +393,7 @@ def compute_msl_for_prior_width(prior_var_target):
 ### Note: having a displaced probe: i.e. using a coherent state probe or having non-zero x0,p0 means, the quadratic subspaces will be suboptimal. I intend to add this change soon...
 
 # -------------------------- User parameters --------------------------
-N = 180  # Fock truncation
+N = 120  # Fock truncation
 
 # Reference state parameters
 ref_state_type = 'vacuum'     # Options: 'vacuum', 'coherent', 'thermal', 'squeezed_vacuum', or 'squeezed_thermal'
@@ -396,8 +404,8 @@ r_squeeze = 0.4               # Squeezing parameter (if squeezed probe)
 phi_squeeze = 0.0             # Squeezing angle of the probe (0 for q-squeezed)
 
 # Prior settings
-prior_type = 'uniform'       # Options: 'gaussian', 'two_gaussian', or 'uniform'
-theta0 = 0.0                  # Prior mean/centre for theta
+prior_type = 'gaussian'       # Options: 'gaussian', 'two_gaussian', or 'uniform'
+theta0 = 0.0                  # Prior mean for theta
 theta_pts = 2000              # Number of grid points for theta
 grid_sigmas = 5             # Gaussian priors are represented out to +/- this many sigma
 
@@ -405,17 +413,21 @@ grid_sigmas = 5             # Gaussian priors are represented out to +/- this ma
 sigma_pts = 25
 prior_var_requested = np.logspace(-3.0, 0.25, sigma_pts)
 
-safety_factor = 5            # Ensures the Fock truncation is enough (5 is mostly safe)
+safety_factor = 1            # Ensures the Fock truncation is enough (5 is mostly safe. Check max Fock-truncation leakage to see its' not too high)
 
 # ---- Feasibility: keep only the widths whose theta grid fits inside the truncation ----
 moments = probe_moments(ref_state_type, x0, p0, alpha_coherent, n_thermal, r_squeeze,phi_squeeze)
-theta_lo_sup, theta_hi_sup = theta_range_supported(N, moments, safety_factor)
-theta_reach = min(theta_hi_sup - theta0, theta0 - theta_lo_sup)
+theta_lo_sup, theta_hi_sup = theta_range_supported(N, moments, safety_factor) # This is the supported range of theta (unknown squeezing) allowed within the truncation (given the safety factor)
+theta_reach = min(theta_hi_sup - theta0, theta0 - theta_lo_sup) # Smallest distance from prior mean
 if theta_reach <= 0:
     raise ValueError(f"theta0 = {theta0} lies outside the supported range "
                      f"[{theta_lo_sup:.2f}, {theta_hi_sup:.2f}]")
 
-# Grid half-width scales as sqrt(sigma_0^2), so one evaluation fixes the proportionality
+"""
+The largest prior variance is calculated from the theta grid by theta_reach >= c * sqrt(sigma_0^2_max) for some constant c which depends on the prior type.
+This allows us to invert for sigma_0. Here, grid_half_width(sigma_0)=c * sqrt(sigma_0), where c=grid_sigmas for Gaussians (i.e. 3-5 prior widths in grid) or sqrt(3) for uniform.
+c (called unit_half here) can then be calculated by grid_half_width(1).
+"""
 unit_half = grid_half_width(theta_scale_from_variance(1.0, prior_type), prior_type, grid_sigmas)
 prior_var_max = (theta_reach / unit_half)**2
 

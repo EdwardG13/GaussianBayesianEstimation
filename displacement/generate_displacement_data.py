@@ -84,7 +84,13 @@ def theta_scale_from_variance(prior_var, prior_type):
     raise ValueError(f"Unknown prior type: {prior_type}")
 
 def grid_half_width(theta_scale, prior_type, grid_sigmas):
-    # How far from theta0 the grid must reach for this prior to be faithfully represented
+    """
+    How far from theta0 the grid must reach for this prior to be faithfully represented.
+
+    Composed with theta_scale_from_variance, half(sigma_0^2) = c * sqrt(sigma_0^2), where c=grid_sigmas for Gaussians (i.e. 3-5 prior widths in grid) or sqrt(3) for uniform.
+
+    The idea is that theta_max-theta_0 >= c * sqrt(sigma_0^2_max) for some constant c which depends on the prior type. This allows us to invert for sigma_0
+    """
     return theta_scale if prior_type == 'uniform' else grid_sigmas * theta_scale
 
 def squeeze_op(r, phi):
@@ -249,6 +255,8 @@ def compute_msl_for_prior_width(prior_var_target):
       - the same measurements post-processed with the posterior mean estimator,
       - x-homodyne with the posterior mean estimator,
       - diagnostics (achieved prior variance, truncation leakage, Gram conditioning).
+
+    Note the prior grid is created fresh for every target prior variance, since it is unfeasable for the same grid to serve large and small prior variances.
     """
     theta_scale = theta_scale_from_variance(prior_var_target, prior_type)
     half = grid_half_width(theta_scale, prior_type, grid_sigmas)
@@ -348,28 +356,30 @@ phi_squeeze = 0.0             # Squeezing angle (0 for x-squeezed)
 
 # Prior settings
 prior_type = 'uniform'        # Options: 'gaussian', 'two_gaussian', or 'uniform'
-theta0 = 0.0                  # Prior mean/centre for theta
+theta0 = 0.0                  # Prior mean for theta
 theta_pts = 2000              # Number of grid points for theta
 grid_sigmas = 5.0             # Gaussian priors are represented out to +/- this many sigma
 
 phi_homodyne = 0.0            # Homodyne angle: 0 and pi/2 are the x and p quadratures
 
-# Prior widths, given directly as the target prior variances sigma_0^2 to sweep. Widths the
-# Fock truncation cannot support are dropped below, with a notice saying what N would allow.
+# Prior variances sigma_0^2. Any variance the Fock truncation cannot support are later dropped, with a notice saying what N would allow.
 sigma_pts = 25
 prior_var_requested = np.logspace(-2.5, 1, sigma_pts)
 
-safety_factor = 10             # Ensures the Fock truncation is enough (10 is mostly safe)
+safety_factor = 10             # Ensures the Fock truncation is enough (I found 5-10 to be safe)
 
 # ---- Feasibility: keep only the widths whose theta grid fits inside the truncation ----
-theta_max = theta_max_supported(N, ref_state_type, alpha_coherent, n_thermal,
-                                r_squeeze, safety_factor)
-theta_reach = theta_max - abs(theta0)
+theta_max = theta_max_supported(N, ref_state_type, alpha_coherent, n_thermal, r_squeeze, safety_factor) # This is largest theta (unknown displacement) allowed within the truncation (given the safety factor)
+theta_reach = theta_max - abs(theta0) # Distance from prior mean
 if theta_reach <= 0:
     raise ValueError(f"theta0 = {theta0} already exceeds the supported range {theta_max:.2f}")
 
-# Grid half-width scales as sqrt(sigma_0^2), so one evaluation fixes the proportionality
-unit_half = grid_half_width(theta_scale_from_variance(1.0, prior_type), prior_type, grid_sigmas)
+"""
+The largest prior variance is calculated from the theta grid by theta_reach >= c * sqrt(sigma_0^2_max) for some constant c which depends on the prior type.
+This allows us to invert for sigma_0. Here, grid_half_width(sigma_0)=c * sqrt(sigma_0), where c=grid_sigmas for Gaussians (i.e. 3-5 prior widths in grid) or sqrt(3) for uniform.
+c (called unit_half here) can then be calculated by grid_half_width(1).
+"""
+unit_half = grid_half_width(theta_scale_from_variance(1.0, prior_type), prior_type, grid_sigmas) # 
 prior_var_max = (theta_reach / unit_half)**2
 
 feasible = prior_var_requested <= prior_var_max
